@@ -40,9 +40,14 @@ start)
     mkdir -p /opt/var/log /opt/var/run
     [ -x "$BIN" ] || { echo "no $BIN"; exit 1; }
     [ -f "$CFG" ] || { echo "no $CFG"; exit 1; }
-    supervise &
+    # nohup + отдельный подрежим: иначе супервизор получает SIGHUP при выходе
+    # init-скрипта и умирает, оставляя прокси без присмотра.
+    nohup "$0" __supervise >>"$LOG" 2>&1 &
     echo $! > "$PIDFILE"
     echo "started pid $(cat "$PIDFILE")"
+    ;;
+__supervise)
+    supervise
     ;;
 stop)
     if [ -f "$PIDFILE" ]; then
