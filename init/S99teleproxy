@@ -18,7 +18,9 @@ EXTRA="--msg-buffers-size 4194304 --connections 256 --max-special-connections 64
 running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 
 supervise() {
-    # $1 — pid-файл; пишем свой pid, чтобы stop мог снять и цикл, и ребёнка.
+    # При снятии супервизора обязательно гасим ребёнка, иначе он остаётся
+    # осиротевшим и продолжает слушать порт (второй экземпляр).
+    trap 'kill "$child" 2>/dev/null; wait "$child" 2>/dev/null; exit 0' TERM INT
     while :; do
         "$BIN" --config "$CFG" $EXTRA >>"$LOG" 2>&1 &
         child=$!
@@ -55,9 +57,12 @@ stop)
         # Сначала снимаем супервизор, чтобы он не поднял ребёнка снова,
         # затем самого teleproxy.
         [ -n "$_sp" ] && kill "$_sp" 2>/dev/null
-        pkill -f "$BIN --config $CFG" 2>/dev/null || true
         sleep 1
     fi
+    # busybox pkill -f не siempre матчит — снимаем по pidof, как умеет везде.
+    for _p in $(pidof teleproxy); do kill "$_p" 2>/dev/null; done
+    sleep 2
+    for _p in $(pidof teleproxy); do kill -9 "$_p" 2>/dev/null; done
     rm -f "$PIDFILE"
     echo stopped
     ;;
