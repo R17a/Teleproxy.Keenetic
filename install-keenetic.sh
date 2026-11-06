@@ -8,7 +8,7 @@
 # Не путать с upstream install.sh — тот ставит systemd-службу на x86/aarch64 VPS.
 set -eu
 
-VER=${VERSION:-1.0.3}
+VER=${VERSION:-1.0.4}
 REPO=${REPO:-https://github.com/R17a/Teleproxy.Keenetic}
 DO_INSTALL=1
 [ "${1:-}" = "--no-install" ] && DO_INSTALL=0
@@ -71,26 +71,11 @@ say "скачано: $TMP/$PKG"
 say "ставлю пакет"
 opkg install "$TMP/$PKG" || die "opkg install не удался"
 
-# Проверяем то, что раньше молча не срабатывало: пользователь и права конфига.
-if ! id -u teleproxy >/dev/null 2>&1; then
-    say "пользователя teleproxy нет — создаю"
-    adduser -S -D -H -s /sbin/nologin teleproxy >/dev/null 2>&1 || \
-        adduser -S -D -H -h /opt/var/empty -s /sbin/nologin teleproxy >/dev/null 2>&1 || \
-        useradd -r -M -s /sbin/nologin teleproxy >/dev/null 2>&1 || true
-fi
-
-if id -u teleproxy >/dev/null 2>&1; then
-    say "teleproxy: uid=$(id -u teleproxy)"
-    chown root:teleproxy /opt/etc/teleproxy/config.toml 2>/dev/null || true
-    chmod 640 /opt/etc/teleproxy/config.toml 2>/dev/null || true
-else
-    say "ВНИМАНИЕ: пользователя teleproxy создать не удалось."
-    say "  либо создайте вручную: adduser -S -D -H -s /sbin/nologin teleproxy"
-    say "  либо в /opt/etc/teleproxy/config.toml поставьте user = \"root\""
-    chmod 644 /opt/etc/teleproxy/config.toml 2>/dev/null || true
-fi
-
-say "готово. Дальше:"
-say "  1) впишите секреты в /opt/etc/teleproxy/config.toml"
-say "  2) /opt/etc/init.d/S99teleproxy start"
-say "  3) в susanin.conf: proxy_uid=teleproxy, proxy_egress=nwg0 (Susanin 0.4.5+)"
+# Всё остальное делает postinst пакета: идентификатор (имя или числовой uid),
+# права на конфиг, ключи P5 в Susanin, проброс 8443 и запуск службы.
+say "итог установки:"
+[ -f /opt/etc/teleproxy/config.toml ] && \
+    say "  config: $(grep -m1 '^user' /opt/etc/teleproxy/config.toml 2>/dev/null)"
+[ -f /opt/susanin/etc/susanin.conf ] && \
+    say "  susanin: $(grep -m1 '^proxy_uid' /opt/susanin/etc/susanin.conf 2>/dev/null)"
+say "  статус: /opt/etc/init.d/S99teleproxy status"

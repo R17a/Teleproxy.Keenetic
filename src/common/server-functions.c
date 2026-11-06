@@ -85,6 +85,32 @@ int change_user_group (const char *username, const char *groupname) {
     if (username == 0 || *username == '\0') {
       username = DEFAULT_ENGINE_USER;
     }
+
+    /* Числовой uid: на Keenetic /etc/passwd в read-only, добавить пользователя
+     * нельзя. Тогда в конфиге можно указать uid числом (например "1001"):
+     * setuid/setgid работают и без записи в passwd, а iptables -m owner
+     * принимает числовой uid. */
+    if (username[0] >= '0' && username[0] <= '9') {
+      char *endp = 0;
+      unsigned long uid = strtoul (username, &endp, 10);
+      if (endp && *endp == '\0' && uid < 0xffffffffUL) {
+        gid_t gid = (gid_t) uid;
+        if (setgroups (1, &gid) < 0) {
+          kprintf ("change_user_group: setgroups(%lu) failed: %m\n", uid);
+          return -1;
+        }
+        if (setgid (gid) < 0) {
+          kprintf ("change_user_group: setgid (%lu) failed: %m\n", uid);
+          return -1;
+        }
+        if (setuid ((uid_t) uid) < 0) {
+          kprintf ("change_user_group: setuid (%lu) failed: %m\n", uid);
+          return -1;
+        }
+        return 0;
+      }
+    }
+
     if ((pw = getpwnam (username)) == 0) {
       kprintf ("change_user_group: can't find the user %s to switch to\n", username);
       return -1;

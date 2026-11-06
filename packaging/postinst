@@ -1,13 +1,9 @@
 #!/bin/sh
-# postinst — установка «под ключ», без ручных шагов на роутере:
-#   1) пользователь teleproxy (запись в /etc/passwd — надёжнее busybox-adduser);
-#   2) права на конфиг;
-#   3) ключи P5 в susanin.conf + перезапуск Susanin (создаст правило метки);
-#   4) проброс порта 8443 (S98teleproxy-fw: сейчас и при каждой загрузке).
+# postinst — установка «под ключ», без ручных шагов на роутере.
 #
-# Важно: без пользователя teleproxy iptables -m owner --uid-owner teleproxy не
-# ставится, метка не появляется, и трафик прокси идёт мимо туннеля
-# (susanin check показывал mark_rules=0).
+# Ключевой момент Keenetic: /etc/passwd обычно read-only, поэтому пользователя
+# teleproxy создать нельзя. Тогда работаем по ЧИСЛОВОМУ uid: teleproxy умеет
+# `user = "1001"`, а iptables понимает `--uid-owner 1001` без записи в passwd.
 set -e
 
 USER_NAME=teleproxy
@@ -32,15 +28,29 @@ add_via_passwd() {
 
 mkdir -p /opt/etc/teleproxy /opt/var/log /opt/var/run "$USER_HOME"
 
-USER_OK=0
-user_exists && USER_OK=1
-# 1) прямая запись — предсказуемо на Keenetic (busybox adduser капризен)
-[ "$USER_OK" = 1 ] || { add_via_passwd && USER_OK=1; }
-# 2) штатные утилиты, если /etc/passwd недоступен для записи
-[ "$USER_OK" = 1 ] || { adduser -S -D -H -s "$USER_SHELL" "$USER_NAME" >/dev/null 2>&1 && user_exists && USER_OK=1; }
-[ "$USER_OK" = 1 ] || { adduser -S -D -H -h "$USER_HOME" -s "$USER_SHELL" "$USER_NAME" >/dev/null 2>&1 && user_exists && USER_OK=1; }
-[ "$USER_OK" = 1 ] || { useradd -r -M -s "$USER_SHELL" "$USER_NAME" >/dev/null 2>&1 && user_exists && USER_OK=1; }
+# --- 1. идентификатор процесса ----------------------------------------------
+MODE=name
+if user_exists; then
+    PROXY_ID=$(id -u "$USER_NAME")
+else
+    add_via_passwd && PROXY_ID=$(id -u "$USER_NAME" 2>/dev/null) && [ -n "$PROXY_ID" ] && MODE=name
+fi
+if [ "$MODE" = name ] && [ -z "$PROXY_ID" ]; then
+    MODE=name
+fi
 
+if [ "$MODE" != name ] || ! user_exists; then
+    # passwd недоступен — числовой uid, пользователя создавать не нужно
+    MODE=numeric
+    PROXY_ID=$BASE_UID
+    while id -u "$PROXY_ID" >/dev/null 2>&1; do
+        PROXY_ID=$((PROXY_ID + 1))
+    done
+fi
+
+echo "[teleproxy] идентификатор: $PROXY_ID (режим: $MODE)"
+
+# --- 2. конфиг и права -------------------------------------------------------
 if [ ! -f /opt/etc/teleproxy/config.toml ]; then
     if [ -f /opt/share/teleproxy/config.toml.example ]; then
         cp /opt/share/teleproxy/config.toml.example /opt/etc/teleproxy/config.toml
@@ -50,59 +60,58 @@ else
     echo "[teleproxy] существующий config.toml сохранён"
 fi
 
-if [ "$USER_OK" = 1 ]; then
-    chown root:"$USER_NAME" /opt/etc/teleproxy/config.toml 2>/dev/null || true
-    chmod 640 /opt/etc/teleproxy/config.toml
-    echo "[teleproxy] пользователь $USER_NAME: uid=$(id -u "$USER_NAME")"
+# user в конфиге: имя, если пользователь есть, иначе число
+if grep -q '^user[[:space:]]*=' /opt/etc/teleproxy/config.toml 2>/dev/null; then
+    sed -i "s|^user[[:space:]]*=.*|user = \"${PROXY_ID}\"|" /opt/etc/teleproxy/config.toml
 else
-    chmod 644 /opt/etc/teleproxy/config.toml
-    echo "[teleproxy] ВНИМАНИЕ: пользователя $USER_NAME создать не удалось (нет доступа к /etc/passwd?)"
-    echo "[teleproxy]   P5 по uid работать не будет; поставьте user = \"root\" в конфиге"
+    printf '\nuser = "%s"\n' "${PROXY_ID}" >> /opt/etc/teleproxy/config.toml
 fi
+chown root:"${PROXY_ID}" /opt/etc/teleproxy/config.toml 2>/dev/null || true
+chmod 640 /opt/etc/teleproxy/config.toml
+echo "[teleproxy] config.toml: user = \"${PROXY_ID}\""
 
-# --- P5 в Susanin ------------------------------------------------------------
+# --- 3. P5 в Susanin ---------------------------------------------------------
 SC=/opt/susanin/etc/susanin.conf
-P5_CHANGED=0
-if [ -f "$SC" ] && [ "$USER_OK" = 1 ]; then
-    if ! grep -q '^proxy_uid=' "$SC" 2>/dev/null; then
+if [ -f "$SC" ]; then
+    if grep -q '^proxy_uid=' "$SC" 2>/dev/null; then
+        sed -i "s|^proxy_uid=.*|proxy_uid=${PROXY_ID}|" "$SC"
+    else
         cat >> "$SC" <<EOF
 
 # P5: трафик прокси на роутере -> туннель (добавлено postinst teleproxy)
-proxy_uid=${USER_NAME}
+proxy_uid=${PROXY_ID}
 proxy_egress=nwg0
 proxy_table=110
 proxy_mark=0x01000000
 EOF
-        echo "[teleproxy] в susanin.conf добавлены proxy_uid/proxy_egress"
-        P5_CHANGED=1
     fi
-    # Перезапуск нужен и когда ключи уже были: без пользователя правило метки
-    # не создалось, и backend_ready должен перепровижнить датаплейн.
+    grep -q '^proxy_egress=' "$SC" 2>/dev/null || echo "proxy_egress=nwg0" >> "$SC"
+    echo "[teleproxy] susanin.conf: proxy_uid=${PROXY_ID}, proxy_egress=nwg0"
     if [ -x /opt/susanin/tools/susanin.sh ]; then
         /opt/susanin/tools/susanin.sh restart >/dev/null 2>&1 || true
         echo "[teleproxy] susanin перезапущен (правило метки пересоздано)"
     fi
-elif [ -f "$SC" ]; then
-    echo "[teleproxy] Susanin есть, но пользователь не создан — P5 не настраиваю"
 else
     echo "[teleproxy] Susanin не найден — ключи P5 добавьте сами:"
-    echo "[teleproxy]   proxy_uid=${USER_NAME} / proxy_egress=nwg0 / proxy_table=110"
+    echo "[teleproxy]   proxy_uid=${PROXY_ID} / proxy_egress=nwg0 / proxy_table=110"
 fi
 
-# --- проброс порта 8443 ------------------------------------------------------
+# --- 4. проброс порта 8443 ---------------------------------------------------
 if [ -x /opt/etc/init.d/S98teleproxy-fw ]; then
     /opt/etc/init.d/S98teleproxy-fw start || \
         echo "[teleproxy] ВНИМАНИЕ: проброс 8443 не встал (нет WAN?)"
 fi
 
-echo "[teleproxy] проверка:"
-echo "  susanin check | grep proxy_egress     (ждём mark_rules=1)"
-echo "  iptables -t nat -S PREROUTING | grep 8443"
-
-# --- запуск службы -----------------------------------------------------------
+# --- 5. запуск службы --------------------------------------------------------
 if [ -x /opt/etc/init.d/S99teleproxy ]; then
     /opt/etc/init.d/S99teleproxy restart >/dev/null 2>&1 || \
         /opt/etc/init.d/S99teleproxy start >/dev/null 2>&1 || true
-    echo "[teleproxy] служба запущена: /opt/etc/init.d/S99teleproxy status"
+    echo "[teleproxy] служба запущена"
 fi
+
+echo "[teleproxy] проверка:"
+echo "  susanin check | grep proxy_egress     (ждём mark_rules=1)"
+echo "  iptables -t mangle -S OUTPUT | grep uid-owner"
+echo "  iptables -t nat -S PREROUTING | grep 8443"
+echo "  ip route get 149.154.167.51 uid ${PROXY_ID}     (ждём dev nwg0)"
 exit 0
