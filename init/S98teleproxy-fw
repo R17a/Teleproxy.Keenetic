@@ -1,34 +1,33 @@
 #!/bin/sh
 # S98teleproxy-fw — проброс порта MTProxy (8443) на роутер.
 #
-# iptables не переживает перезагрузку/пересборку правил NDM, поэтому правило
-# ставится при каждом старте. Скрипт идемпотентный: одноразовый запуск при
-# установке и при загрузке (S98 выполняется раньше S99teleproxy).
+# iptables не переживает перезагрузку, а WAN (ppp0) на Keenetic поднимается
+# ПОЗЖЕ старта init-скриптов — одноразовая попытка на загрузке часто опаздывает,
+# и порт остаётся закрытым (INPUT policy DROP). Поэтому:
+#   * start — ставит правила сейчас и запускает фоновый наблюдатель;
+#   * наблюдатель раз в 60 с проверяет наличие правил и восстанавливает их
+#     (ловит поздний WAN, реконнект PPPoE, пересборку правил NDM);
+#   * stop — снимает правила и гасит наблюдатель.
 #
-#   порт 8443 с WAN   -> localhost:8443
-#   порт 8443 из LAN  -> localhost:8443 (по внешнему IP, чтобы работала ссылка)
-#
-# Порт 443 не используется: на роутере его занимает ocserv/nginx (OC+ и веб-конфигуратор).
+# Внешний порт 8443 → localhost:8443 + ACCEPT в INPUT. Для LAN — по внешнему IP,
+# чтобы ссылка работала и из WiFi. Порт 443 не трогаем: там ocserv/nginx.
 
 PORT=8443
-PIDWAIT=0
+PIDFILE=/opt/var/run/teleproxy-fw.pid
+LOG=/opt/var/log/teleproxy-fw.log
 
-# Роутер на 124 МБ без swap, рядом работают Xray и NDM. Долгие записи conntrack и
-# «осиротевшие» сокеты выедают память и приводят к OOM/kswapd. Значения
-# применяются при каждом старте (в /proc/sys они не переживают перезагрузку).
-tune_kernel() {
-    set_one() { # set_one <path> <value>
-        [ -w "$1" ] && echo "$2" > "$1" 2>/dev/null || true
-    }
-    set_one /proc/sys/net/netfilter/nf_conntrack_tcp_timeout_established 600
-    set_one /proc/sys/net/netfilter/nf_conntrack_udp_timeout 30
-    set_one /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream 60
-    set_one /proc/sys/net/ipv4/tcp_fin_timeout 30
-    set_one /proc/sys/net/ipv4/tcp_tw_reuse 1
+say() { echo "[teleproxy-fw] $*"; }
+
+wan_if() {
+    ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1
+}
+
+ext_ip() {
+    ip route get 8.8.8.8 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") { print $(i+1); exit }}'
 }
 
 apply_rules() {
-    WAN=$(ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+    WAN=$(wan_if)
     [ -n "$WAN" ] && [ "$WAN" != "link" ] || return 1
 
     iptables -w -t nat -C PREROUTING -i "$WAN" -p tcp --dport "$PORT" \
@@ -39,8 +38,7 @@ apply_rules() {
     iptables -w -C INPUT -i "$WAN" -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || \
     iptables -w -I INPUT 1 -i "$WAN" -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || true
 
-    # LAN: ссылка указывает на внешний IP, поэтому заворачиваем и его.
-    EXT=$(ip route get 8.8.8.8 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") { print $(i+1); exit }}')
+    EXT=$(ext_ip)
     if [ -n "$EXT" ]; then
         for IF in br0 br1; do
             iptables -w -t nat -C PREROUTING -i "$IF" -p tcp -d "$EXT" --dport "$PORT" \
@@ -52,39 +50,74 @@ apply_rules() {
     return 0
 }
 
+rules_ok() {
+    WAN=$(wan_if)
+    [ -n "$WAN" ] || return 1
+    iptables -w -t nat -C PREROUTING -i "$WAN" -p tcp --dport "$PORT" \
+        -j REDIRECT --to-ports "$PORT" 2>/dev/null || return 1
+    iptables -w -C INPUT -i "$WAN" -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || return 1
+    return 0
+}
+
+watch_loop() {
+    while :; do
+        if ! rules_ok; then
+            if apply_rules; then
+                echo "[$(date '+%F %T')] правила восстановлены (wan=$(wan_if))" >>"$LOG"
+            fi
+        fi
+        sleep 60
+    done
+}
+
 case "${1:-start}" in
     start)
-        tune_kernel
-        # при загрузке WAN может подниматься позже — ждём до 60 с
+        mkdir -p /opt/var/log /opt/var/run 2>/dev/null || true
         i=0
-        while [ "$i" -lt 12 ]; do
+        while [ "$i" -lt 6 ]; do
             apply_rules && break
             i=$((i + 1))
-            [ "$i" -lt 12 ] && sleep 5
+            [ "$i" -lt 6 ] && sleep 5
         done
-        if apply_rules; then
-            echo "teleproxy-fw: порт $PORT проброшен (wan=$WAN)"
+        if rules_ok; then
+            say "порт $PORT проброшен (wan=$(wan_if))"
         else
-            echo "teleproxy-fw: не удалось поставить правила (нет WAN?)" >&2
-            exit 1
+            say "WAN ещё не готов — правила поставит наблюдатель"
         fi
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            exit 0
+        fi
+        nohup "$0" __watch >>"$LOG" 2>&1 &
+        echo $! > "$PIDFILE"
+        ;;
+    __watch)
+        watch_loop
         ;;
     stop)
-        WAN=$(ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
-        [ -n "$WAN" ] && iptables -w -t nat -D PREROUTING -i "$WAN" -p tcp --dport "$PORT" \
-            -j REDIRECT --to-ports "$PORT" 2>/dev/null || true
-        [ -n "$WAN" ] && iptables -w -D INPUT -i "$WAN" -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || true
-        EXT=$(ip route get 8.8.8.8 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") { print $(i+1); exit }}')
+        [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+        rm -f "$PIDFILE"
+        WAN=$(wan_if)
+        if [ -n "$WAN" ]; then
+            iptables -w -t nat -D PREROUTING -i "$WAN" -p tcp --dport "$PORT" \
+                -j REDIRECT --to-ports "$PORT" 2>/dev/null || true
+            iptables -w -D INPUT -i "$WAN" -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || true
+        fi
+        EXT=$(ext_ip)
         if [ -n "$EXT" ]; then
             for IF in br0 br1; do
                 iptables -w -t nat -D PREROUTING -i "$IF" -p tcp -d "$EXT" --dport "$PORT" \
                     -j REDIRECT --to-ports "$PORT" 2>/dev/null || true
             done
         fi
-        echo "teleproxy-fw: правила сняты"
+        say "правила сняты, наблюдатель остановлен"
         ;;
     status)
-        iptables -w -t nat -S PREROUTING | grep -F -- "--dport $PORT" || echo "правил нет"
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "наблюдатель: RUNNING pid $(cat "$PIDFILE")"
+        else
+            echo "наблюдатель: STOPPED"
+        fi
+        if rules_ok; then echo "правила: OK (wan=$(wan_if))"; else echo "правила: MISSING"; fi
         ;;
     *)
         echo "usage: $0 {start|stop|status}" >&2

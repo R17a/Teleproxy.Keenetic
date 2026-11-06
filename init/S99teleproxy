@@ -16,12 +16,25 @@ BIN=/opt/sbin/teleproxy
 EXTRA="--msg-buffers-size 4194304 --connections 256 --max-special-connections 64"
 
 running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+    # Ждём DNS перед стартом: если прокси поднимется, пока сеть/DNS ещё не готовы,
+    # он не разрешит domain и соберёт fake-TLS с дефолтными параметрами — клиенты
+    # зависают на "Соединение". До 30 c.
+wait_dns() {
+    _i=0
+    while [ "$_i" -lt 15 ]; do
+        nslookup cloudflare.com >/dev/null 2>&1 && return 0
+        _i=$((_i + 1))
+        sleep 2
+    done
+    return 1
+}
 
 supervise() {
     # При снятии супервизора обязательно гасим ребёнка, иначе он остаётся
     # осиротевшим и продолжает слушать порт (второй экземпляр).
     trap 'kill "$child" 2>/dev/null; wait "$child" 2>/dev/null; exit 0' TERM INT
     while :; do
+        wait_dns || echo "[supervisor] DNS не готов — стартую всё равно" >>"$LOG"
         "$BIN" --config "$CFG" $EXTRA >>"$LOG" 2>&1 &
         child=$!
         wait "$child"
