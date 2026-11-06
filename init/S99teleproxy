@@ -9,7 +9,9 @@ BIN=/opt/sbin/teleproxy
 #   --msg-buffers-size 16M  — пул буферов (дефолт 256 МБ => OOM при видео)
 #   --connections 512       — потолок соединений (дефолт из сборки 2048)
 #   --max-special-connections 128
-EXTRA="--msg-buffers-size 16777216 --connections 512 --max-special-connections 128"
+# Буферы и потолок соединений умеренные: роутер на 124 МБ без swap, а рядом
+# работают Xray и NDM. 16 МБ буферов давали давление на память (kswapd/OOM).
+EXTRA="--msg-buffers-size 4194304 --connections 256 --max-special-connections 64"
 
 case "$1" in
 start)

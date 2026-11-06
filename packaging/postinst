@@ -113,5 +113,5 @@ echo "[teleproxy] проверка:"
 echo "  susanin check | grep proxy_egress     (ждём mark_rules=1)"
 echo "  iptables -t mangle -S OUTPUT | grep uid-owner"
 echo "  iptables -t nat -S PREROUTING | grep 8443"
-echo "  ip route get 149.154.167.51 uid ${PROXY_ID}     (ждём dev nwg0)"
+echo "  ip route show table 110                        (ждём default dev nwg0)"
 exit 0

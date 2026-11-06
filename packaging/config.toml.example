@@ -13,7 +13,7 @@ direct = true
 user = "teleproxy"
 workers = 0
 # потолок соединений (таблица в сборке на 2048; для дома хватает 512)
-max_connections = 512
+max_connections = 256
 domain = "cloudflare.com"
 
 # Секрет: 32 hex-символа (16 байт). Добавьте свои блоки [[secret]] по образцу.

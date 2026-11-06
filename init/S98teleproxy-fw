@@ -13,6 +13,20 @@
 PORT=8443
 PIDWAIT=0
 
+# Роутер на 124 МБ без swap, рядом работают Xray и NDM. Долгие записи conntrack и
+# «осиротевшие» сокеты выедают память и приводят к OOM/kswapd. Значения
+# применяются при каждом старте (в /proc/sys они не переживают перезагрузку).
+tune_kernel() {
+    set_one() { # set_one <path> <value>
+        [ -w "$1" ] && echo "$2" > "$1" 2>/dev/null || true
+    }
+    set_one /proc/sys/net/netfilter/nf_conntrack_tcp_timeout_established 600
+    set_one /proc/sys/net/netfilter/nf_conntrack_udp_timeout 30
+    set_one /proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream 60
+    set_one /proc/sys/net/ipv4/tcp_fin_timeout 30
+    set_one /proc/sys/net/ipv4/tcp_tw_reuse 1
+}
+
 apply_rules() {
     WAN=$(ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
     [ -n "$WAN" ] && [ "$WAN" != "link" ] || return 1
@@ -40,6 +54,7 @@ apply_rules() {
 
 case "${1:-start}" in
     start)
+        tune_kernel
         # при загрузке WAN может подниматься позже — ждём до 60 с
         i=0
         while [ "$i" -lt 12 ]; do
