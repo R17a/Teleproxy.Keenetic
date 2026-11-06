@@ -2,13 +2,13 @@
 # install-keenetic.sh — установка Teleproxy.Keenetic на роутер из релиза GitHub (.ipk).
 #
 #   wget -qO- https://raw.githubusercontent.com/R17a/Teleproxy.Keenetic/main/install-keenetic.sh | sh
-#   VERSION=1.0 sh install-keenetic.sh       # конкретная версия
+#   VERSION=1.0.1 sh install-keenetic.sh       # конкретная версия
 #   sh install-keenetic.sh --no-install      # только скачать пакет
 #
 # Не путать с upstream install.sh — тот ставит systemd-службу на x86/aarch64 VPS.
 set -eu
 
-VER=${VERSION:-1.0}
+VER=${VERSION:-1.0.1}
 REPO=${REPO:-https://github.com/R17a/Teleproxy.Keenetic}
 DO_INSTALL=1
 [ "${1:-}" = "--no-install" ] && DO_INSTALL=0
@@ -70,6 +70,25 @@ say "скачано: $TMP/$PKG"
 
 say "ставлю пакет"
 opkg install "$TMP/$PKG" || die "opkg install не удался"
+
+# Проверяем то, что раньше молча не срабатывало: пользователь и права конфига.
+if ! id -u teleproxy >/dev/null 2>&1; then
+    say "пользователя teleproxy нет — создаю"
+    adduser -S -D -H -s /sbin/nologin teleproxy >/dev/null 2>&1 || \
+        adduser -S -D -H -h /opt/var/empty -s /sbin/nologin teleproxy >/dev/null 2>&1 || \
+        useradd -r -M -s /sbin/nologin teleproxy >/dev/null 2>&1 || true
+fi
+
+if id -u teleproxy >/dev/null 2>&1; then
+    say "teleproxy: uid=$(id -u teleproxy)"
+    chown root:teleproxy /opt/etc/teleproxy/config.toml 2>/dev/null || true
+    chmod 640 /opt/etc/teleproxy/config.toml 2>/dev/null || true
+else
+    say "ВНИМАНИЕ: пользователя teleproxy создать не удалось."
+    say "  либо создайте вручную: adduser -S -D -H -s /sbin/nologin teleproxy"
+    say "  либо в /opt/etc/teleproxy/config.toml поставьте user = \"root\""
+    chmod 644 /opt/etc/teleproxy/config.toml 2>/dev/null || true
+fi
 
 say "готово. Дальше:"
 say "  1) впишите секреты в /opt/etc/teleproxy/config.toml"

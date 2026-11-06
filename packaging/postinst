@@ -1,23 +1,52 @@
 #!/bin/sh
 # postinst: пользователь teleproxy, каталоги, конфиг-пример (существующий не трогаем).
-set -e
+#
+# Важно: раньше создание пользователя было с `|| true`, и на Keenetic (busybox
+# adduser с другими флагами) оно молча не срабатывало — прокси потом падал с
+# "can't find the user teleproxy", а конфиг оставался root:root.
 
-if ! id -u teleproxy >/dev/null 2>&1; then
-    adduser -S -D -H -s /sbin/nologin teleproxy >/dev/null 2>&1 || \
-        useradd -r -s /sbin/nologin teleproxy >/dev/null 2>&1 || true
+make_user() {
+    _u="$1"
+    id -u "$_u" >/dev/null 2>&1 && return 0
+
+    # busybox (Keenetic): -S системный, -D без пароля, -H без home
+    adduser -S -D -H -s /sbin/nologin "$_u" >/dev/null 2>&1 && return 0
+    # busybox с явным home (некоторые сборки требуют)
+    adduser -S -D -H -h /opt/var/empty -s /sbin/nologin "$_u" >/dev/null 2>&1 && return 0
+    # Entware/Debian-вариант
+    useradd -r -M -s /sbin/nologin "$_u" >/dev/null 2>&1 && return 0
+    return 1
+}
+
+USER_OK=0
+if make_user teleproxy && id -u teleproxy >/dev/null 2>&1; then
+    USER_OK=1
 fi
 
-mkdir -p /opt/etc/teleproxy /opt/var/log /opt/var/run
+mkdir -p /opt/etc/teleproxy /opt/var/log /opt/var/run /opt/var/empty
 
 if [ ! -f /opt/etc/teleproxy/config.toml ]; then
     if [ -f /opt/share/teleproxy/config.toml.example ]; then
         cp /opt/share/teleproxy/config.toml.example /opt/etc/teleproxy/config.toml
-        chown root:teleproxy /opt/etc/teleproxy/config.toml 2>/dev/null || true
-        chmod 640 /opt/etc/teleproxy/config.toml
         echo "[teleproxy] создан /opt/etc/teleproxy/config.toml — впишите свои секреты"
     fi
 else
     echo "[teleproxy] существующий config.toml сохранён"
+fi
+
+if [ "$USER_OK" = "1" ]; then
+    chown root:teleproxy /opt/etc/teleproxy/config.toml 2>/dev/null || \
+        chown root:$(id -gn teleproxy) /opt/etc/teleproxy/config.toml 2>/dev/null || true
+    chmod 640 /opt/etc/teleproxy/config.toml
+    echo "[teleproxy] пользователь teleproxy: uid=$(id -u teleproxy)"
+else
+    # Пользователя создать не удалось — прокси под ним не запустится.
+    # Не оставляем нечитаемый конфиг: разрешаем чтение и предупреждаем.
+    chmod 644 /opt/etc/teleproxy/config.toml
+    echo "[teleproxy] ВНИМАНИЕ: пользователя teleproxy создать не удалось."
+    echo "[teleproxy] Запуск будет падать с 'can't find the user teleproxy'."
+    echo "[teleproxy] Создайте вручную: adduser -S -D -H -s /sbin/nologin teleproxy"
+    echo "[teleproxy] либо поставьте в конфиге user = \"root\"."
 fi
 
 echo "[teleproxy] запуск: /opt/etc/init.d/S99teleproxy start"

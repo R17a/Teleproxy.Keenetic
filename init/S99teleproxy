@@ -27,7 +27,12 @@ stop)
     echo stopped
     ;;
 reload)
-    [ -f "$PIDFILE" ] && kill -HUP "$(cat $PIDFILE)" 2>/dev/null && echo reloaded
+    [ -f "$PIDFILE" ] && kill -HUP "$(cat "$PIDFILE")" 2>/dev/null && echo reloaded
+    ;;
+restart)
+    "$0" stop
+    sleep 1
+    "$0" start
     ;;
 status)
     if [ -f "$PIDFILE" ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
@@ -37,6 +42,6 @@ status)
     fi
     ;;
 *)
-    echo "usage: $0 {start|stop|reload|status}"; exit 1
+    echo "usage: $0 {start|stop|restart|reload|status}"; exit 1
     ;;
 esac
