@@ -13,9 +13,10 @@
 [![Donate DonationAlerts](https://img.shields.io/badge/donate-DonationAlerts-f5a623.svg?style=flat)](https://www.donationalerts.com/r/dmitriy_r17a)
 [![Join Telegram group](https://img.shields.io/badge/Telegram_group-Join-blue.svg?style=social&logo=telegram)](https://t.me/Susanin_Keenetic)
 
-> Это README нашего форка. Документация upstream (сборка, конфиг, тесты, docs/)
-> — в репозитории [`teleproxy/teleproxy`](https://github.com/teleproxy/teleproxy#readme)
-> и в каталоге [`docs/`](docs/) этого репозитория; исходники те же, плюс патчи ниже.
+> Это README нашего форка. Документация upstream (сборка, конфиг, тесты) —
+> в репозитории [`teleproxy/teleproxy`](https://github.com/teleproxy/teleproxy#readme).
+> Исходники те же, плюс патчи ниже; каталоги docs/, tests/, fuzz/, Docker-обвязка
+> в этом форке не нужны и удалены.
 
 <hr>
 
@@ -226,37 +227,36 @@ iptables -I INPUT 1 -i "$WAN" -p tcp --dport 8443 -j ACCEPT
 ```
 
 Правила живут до перезагрузки; для постоянства — отдельный init-скрипт (см.
-`dist/S99teleproxy` и историю Susanin.Keenetic).
+`init/S99teleproxy` и историю Susanin.Keenetic).
 
 ## Требования
 
-- Entware на роутере;
-- работающий Xray/VLESS+REALITY с SOCKS-входом `127.0.0.1:1080`
-  ([Susanin.Keenetic](https://github.com/R17a/Susanin.Keenetic), `egress_type=tproxy`);
-- публичный IP и проброс порта.
+- роутер Keenetic с Entware (нужен `opkg`);
+- **поднятый туннель WireGuard/AmneziaWG** («Другое подключение» Keenetic, интерфейс
+  вида `nwg0`), через который доступны серверы Telegram;
+- [Susanin.Keenetic](https://github.com/R17a/Susanin.Keenetic) **0.4.5+** с
+  настроенным `proxy_uid=teleproxy` и `proxy_egress=nwg0` — он направляет трафик
+  прокси в туннель по uid;
+- публичный IP и проброс внешнего порта на роутер.
 
-## Ветки и обновление с upstream
+Xray/VLESS и SOCKS-вход **не нужны**: прокси работает в режиме `direct = true` и
+выходит в интернет через WireGuard-интерфейс. Без Susanin прокси тоже запустится,
+но пойдёт напрямую — из РФ серверы Telegram при этом недоступны.
 
-Проект ведётся как самостоятельная ветка, в upstream ничего не отправляем.
+## Ветка и обновление с upstream
 
-| Ветка | Назначение |
-|---|---|
-| `main` | чистое зеркало `teleproxy/teleproxy` (только fast-forward, наших коммитов нет) |
-| `keenetic` | рабочая ветка: патчи, `tools/`, `dist/`; сюда идут все наши коммиты |
-
-Подтянуть исправления апстрима:
+Проект ведётся одной веткой `main` (как Susanin.Keenetic); в upstream ничего не
+отправляем, только забираем исправления.
 
 ```bash
 git fetch upstream
-git checkout main
-git merge --ff-only upstream/main
-git checkout keenetic
-git merge main            # конфликты возможны только в 4 изменённых файлах
-git push origin main keenetic
+git merge upstream/main        # конфликты возможны в изменённых файлах (см. таблицу патчей)
+git push origin main
 ```
 
-`--ff-only` на `main` гарантирует, что зеркало не разъедется с апстримом, а все наши
-правки останутся в `keenetic`.
+Отдельного зеркала апстрима нет: часть каталогов upstream (docs/, tests/, fuzz/,
+Docker-обвязка) удалена, поэтому при мерже возможны конфликты типа
+«modify/delete» — их решаем в пользу нашей версии.
 
 ## Откат
 

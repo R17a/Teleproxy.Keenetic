@@ -1,0 +1,22 @@
+# Teleproxy на Keenetic (mipsel/aarch64/...).
+# Слушаем 8443: 443 на роутере обычно занят ocserv/nginx (OC+ и веб-конфигуратор).
+# Исходящие к Telegram DC идут напрямую, маршрут в туннель задаёт Susanin 0.4.5
+# по uid процесса (proxy_uid / proxy_egress) — см. README.md.
+# SOCKS5 не используется: остаётся одна крипто-схема (MTProto + WireGuard в ядре).
+
+port = 8443
+stats_port = 8899
+http_stats = true
+direct = true
+# Работаем под отдельным пользователем: по нему Susanin матчит трафик.
+# Пользователя создаёт postinst пакета (или вручную: adduser -S -D -H teleproxy).
+user = "teleproxy"
+workers = 0
+# потолок соединений (таблица в сборке на 2048; для дома хватает 512)
+max_connections = 512
+domain = "cloudflare.com"
+
+# Секрет: 32 hex-символа (16 байт). Добавьте свои блоки [[secret]] по образцу.
+[[secret]]
+key = "72995647c48776f584339f198f0ad2b7"
+label = "default"

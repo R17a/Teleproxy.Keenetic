@@ -62,7 +62,7 @@ build_one() { # build_one <arch> <binary>
     chmod 755 "$_d/opt/sbin/teleproxy"
     cp "$SRC/init/S99teleproxy" "$_d/opt/etc/init.d/S99teleproxy"
     chmod 755 "$_d/opt/etc/init.d/S99teleproxy"
-    cp "$SRC/dist/config.toml" "$_d/opt/share/teleproxy/config.toml.example"
+    cp "$SRC/packaging/config.toml.example" "$_d/opt/share/teleproxy/config.toml.example"
     chmod 644 "$_d/opt/share/teleproxy/config.toml.example"
 
     _size=$(du -sk "$_d" | awk '{print $1}')

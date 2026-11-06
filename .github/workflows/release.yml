@@ -1,117 +1,67 @@
-name: Release
+name: build-and-release
 
+# Сборка под все архитектуры Keenetic и публикация релиза по тегу v*.
+# Ручной запуск (workflow_dispatch) собирает и выкладывает артефакты в run,
+# релиз создаётся только на тег.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-          - arch: arm64
-            platform: linux/arm64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
-
-      - name: Build static binary
+      - name: Cross toolchains
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          docker run --rm --platform ${{ matrix.platform }} \
-            -v "$PWD:/src" -w /src alpine:3.21 sh -c "
-              apk add --no-cache build-base openssl-dev openssl-libs-static zlib-dev zlib-static linux-headers git
-              git config --global --add safe.directory /src
-              make clean
-              make -j\$(nproc) EXTRA_VERSION=${VERSION} EXTRA_LDFLAGS='-static'
-            "
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl perl ca-certificates \
+            gcc-mipsel-linux-gnu gcc-mips-linux-gnu \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
 
-      - name: Verify static linking
+      - name: Build (all arches)
+        run: bash tools/build-arch.sh all
+
+      - name: Package .ipk
         run: |
-          file objs/bin/teleproxy | tee /dev/stderr | grep -q "statically linked"
+          VER="${GITHUB_REF_NAME#v}"
+          if [ -z "$VER" ] || [ "$VER" = "$GITHUB_REF_NAME" ]; then VER="1.0"; fi
+          cp packaging/config.toml.example dist/config.toml
+          sh packaging/make-ipk.sh --version "$VER"
 
-      - name: Upload artifact
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum ./teleproxy.* ./teleproxy-keenetic_*.ipk > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload artifacts (any run)
         uses: actions/upload-artifact@v4
         with:
-          name: teleproxy-linux-${{ matrix.arch }}
-          path: objs/bin/teleproxy
+          name: teleproxy-keenetic
+          path: |
+            dist/teleproxy.*
+            dist/teleproxy-keenetic_*.ipk
+            dist/config.toml
+            dist/SHA256SUMS
+          if-no-files-found: error
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Prepare release assets
-        run: |
-          mkdir -p release
-          cp artifacts/teleproxy-linux-amd64/teleproxy release/teleproxy-linux-amd64
-          cp artifacts/teleproxy-linux-arm64/teleproxy release/teleproxy-linux-arm64
-          chmod +x release/teleproxy-linux-*
-          cd release
-          sha256sum teleproxy-linux-* > SHA256SUMS
-
-      - name: Extract changelog
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > release-notes.md
-
-      - name: Create GitHub Release
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*
-          body_path: release-notes.md
-
-      - name: Trigger RPM repo rebuild
-        if: env.TELEPROXY_REPO_DISPATCH_TOKEN != ''
-        env:
-          TELEPROXY_REPO_DISPATCH_TOKEN: ${{ secrets.TELEPROXY_REPO_DISPATCH_TOKEN }}
-        run: |
-          curl -fsSL \
-            -X POST \
-            -H "Authorization: Bearer $TELEPROXY_REPO_DISPATCH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/teleproxy/repo/dispatches \
-            -d "{\"event_type\":\"new-release\",\"client_payload\":{\"tag\":\"${GITHUB_REF_NAME}\"}}"
-
-      - name: Notify Telegram
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        if: env.TELEGRAM_BOT_TOKEN != ''
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          BODY=$(cat release-notes.md | head -c 2000)
-          # Convert Markdown to Telegram HTML
-          BODY=$(echo "$BODY" | sed \
-            -e 's/&/\&amp;/g' \
-            -e 's/</\&lt;/g' \
-            -e 's/>/\&gt;/g' \
-            -e 's/^###* \(.*\)$/<b>\1<\/b>/g' \
-            -e 's/`\([^`]*\)`/<code>\1<\/code>/g' \
-            -e 's/\*\*\([^*]*\)\*\*/<b>\1<\/b>/g')
-          TEXT=$(printf '🚀 <b>New Release: %s</b>\n\n%s\n\n<a href="https://github.com/%s/releases/tag/%s">Release notes</a> | <a href="https://github.com/%s">GitHub</a>' \
-            "$TAG" "$BODY" "${{ github.repository }}" "$TAG" "${{ github.repository }}")
-          RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -H 'Content-Type: application/json' \
-            -d "$(jq -n --arg chat_id "$TELEGRAM_CHAT_ID" --arg text "$TEXT" \
-              '{chat_id: $chat_id, text: $text, parse_mode: "HTML", disable_web_page_preview: true}')")
-          if ! echo "$RESPONSE" | jq -e '.ok' > /dev/null 2>&1; then
-            echo "::error::Telegram notification failed: $RESPONSE"
-            exit 1
-          fi
+          name: Teleproxy.Keenetic ${{ github.ref_name }}
+          body_path: release-notes-v1.0.md
+          files: |
+            dist/teleproxy.*
+            dist/teleproxy-keenetic_*.ipk
+            dist/config.toml
+            dist/SHA256SUMS

@@ -8,3 +8,4 @@ init/* text eol=lf
 *.md   text eol=lf
 *.toml text eol=lf
 Makefile text eol=lf
+*.example text eol=lf

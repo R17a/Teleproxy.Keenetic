@@ -1,3 +1,0 @@
-requests
-telethon>=1.42,<1.43.0
-TelethonFakeTLS
