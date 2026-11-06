@@ -40,6 +40,15 @@ static __inline__ unsigned long long rdtsc(void) {
   __asm__ __volatile__ ("mrs %0, cntvct_el0" : "=r" (val));
   return val;
 }
+#else
+/* MIPS, ARMv7, RISC-V и прочее: монотонные наносекунды вместо счётчика TSC.
+   Используется только для измерения интервалов и сидов, абсолютное значение
+   не важно. */
+static __inline__ unsigned long long rdtsc(void) {
+  struct timespec ts;
+  clock_gettime (CLOCK_MONOTONIC, &ts);
+  return (unsigned long long) ts.tv_sec * 1000000000ULL + (unsigned long long) ts.tv_nsec;
+}
 #endif
 
 /* net-event.h */

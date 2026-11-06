@@ -16,6 +16,7 @@ build-deadcode.log
 *.md
 !README.md
 !CHANGELOG.md
+!release-notes*.md
 !docs/**/*.md
 site/
 tests/regenerate_*.py
@@ -41,3 +42,4 @@ observatory/
 
 # Branding assets (not tracked)
 branding/
+dist/

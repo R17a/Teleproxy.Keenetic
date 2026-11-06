@@ -1,135 +1,230 @@
-# Teleproxy
+# Teleproxy.Keenetic
 
-[![CI](https://github.com/teleproxy/teleproxy/actions/workflows/test.yml/badge.svg)](https://github.com/teleproxy/teleproxy/actions/workflows/test.yml)
-[![Docker](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/teleproxy/teleproxy/pkgs/container/teleproxy)
-[![License: GPLv2](https://img.shields.io/badge/license-GPLv2-blue.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/teleproxy/teleproxy?style=flat&label=stars)](https://github.com/teleproxy/teleproxy)
-[![Release](https://img.shields.io/github/v/release/teleproxy/teleproxy?label=release)](https://github.com/teleproxy/teleproxy/releases/latest)
-[![Telegram](https://img.shields.io/badge/telegram-@teleproxy__dev-blue?logo=telegram)](https://t.me/teleproxy_dev)
+**MTProto-прокси с fake-TLS для роутеров Keenetic (Entware) · форк [teleproxy/teleproxy](https://github.com/teleproxy/teleproxy)**
 
-High-performance MTProto proxy for Telegram with DPI resistance, fake-TLS camouflage, and production-grade monitoring.
+[![Language: C11](https://img.shields.io/badge/C-11-blue?logo=c&logoColor=white)](src)
+[![Upstream](https://img.shields.io/badge/upstream-teleproxy%2Fteleproxy-lightgrey)](https://github.com/teleproxy/teleproxy)
+[![Entware required](https://img.shields.io/badge/Entware-required-orange)](README.md)
+[![Architectures](https://img.shields.io/badge/arch-mipsel%20%7C%20mips%20%7C%20aarch64%20%7C%20armv7-lightgrey)](README.md)
+[![License](https://img.shields.io/badge/license-GPLv2-blue)](LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/R17a/Teleproxy.Keenetic/total)](https://github.com/R17a/Teleproxy.Keenetic/releases)
 
-**[Documentation](https://teleproxy.github.io)** | **[Docker Quick Start](https://teleproxy.github.io/docker/)** | **[Comparison](https://teleproxy.github.io/comparison/)** | **[Telegram](https://t.me/teleproxy_dev)**
+[![Donate CloudTips](https://img.shields.io/badge/donate-CloudTips-598bd7.svg?style=flat)](https://pay.cloudtips.ru/p/dcbf5f2e)
+[![Donate DonationAlerts](https://img.shields.io/badge/donate-DonationAlerts-f5a623.svg?style=flat)](https://www.donationalerts.com/r/dmitriy_r17a)
+[![Join Telegram group](https://img.shields.io/badge/Telegram_group-Join-blue.svg?style=social&logo=telegram)](https://t.me/Susanin_Keenetic)
 
-> [!NOTE]
-> Teleproxy is maintained by one person. If it's useful to you, consider [supporting development](https://teleproxy.github.io/donate/).
->
-> | | |
-> |---|---|
-> | Telegram | **[Donate via Tribute](https://t.me/tribute/app?startapp=dIa9)** (cards, worldwide) |
-> | Web | **[Donate via Tribute](https://web.tribute.tg/d/Ia9)** |
-> | TON (The Open Network) | `UQCRB931D__Q2YQmAbUfcuHQ7fHsG3_3At7e6pUtNa6b9bTh` ([Tonkeeper](https://app.tonkeeper.com/transfer/UQCRB931D__Q2YQmAbUfcuHQ7fHsG3_3At7e6pUtNa6b9bTh)) |
-> | USDT — TON network ONLY | same address as above (not TRC20/ERC20) |
+> Это README нашего форка. Документация upstream (сборка, конфиг, тесты, docs/)
+> — в репозитории [`teleproxy/teleproxy`](https://github.com/teleproxy/teleproxy#readme)
+> и в каталоге [`docs/`](docs/) этого репозитория; исходники те же, плюс патчи ниже.
 
-<details>
-<summary>🎵 Ghost Protocol — the unofficial anthem</summary>
-<br>
-<video src="https://github.com/user-attachments/assets/37919bc8-2bbb-4bea-8af6-2e15d3bc7c65" controls width="640"></video>
-</details>
+<hr>
 
-## Deploy (beta)
+## Зачем этот форк
 
-Get a proxy running in under 2 minutes:
+Оригинальный [MTProxy](https://github.com/TelegramMessenger/MTProxy) (C) не умеет
+fake-TLS, а Python-прокси на слабом роутере съедает 45–50 МБ RAM и валит память
+(проверено на Keenetic Viva: 124 МБ, вместе с Xray остаётся ~10 МБ — дальше
+reclaim, load 10+ и зависание сети).
 
-[![Deploy](https://img.shields.io/badge/deploy-one--click-00C853?style=for-the-badge&logoColor=white)](https://teleproxy.github.io/deploy/)
+`teleproxy` — C-форк с fake-TLS (режим EE), direct-to-DC, динамическим размером
+записей и низким потреблением памяти. На MIPS он вписывается в роутер.
 
-The deploy page generates a unique secret, gives you a script to paste when creating a VPS, then shows your connection QR code. No terminal needed.
+Этот репозиторий — тот же код плюс минимальные правки, чтобы он собирался и
+работал на архитектурах Keenetic, и готовые артефакты в `dist/`.
 
-Supports: DigitalOcean · Vultr · Hetzner · Linode · any Ubuntu/Debian VPS
+**Статус:** собирается и запускается на `mipsel` (Keenetic Viva, MT7621).
+Выход в туннель — по uid через [Susanin.Keenetic](https://github.com/R17a/Susanin.Keenetic)
+0.4.5 (`proxy_uid` / `proxy_egress`), без SOCKS и без `ip route` в main-таблице.
 
-## Highlights
+## Что изменено относительно upstream
 
-- **Fake-TLS camouflage** — emulates HTTPS handshakes and TLS records
-- **Direct-to-DC mode** — bypass middle-end relays, zero config files needed
-- **Dynamic Record Sizing** — varies record sizes and inter-record delays
-- **8 MB Docker image** — 7x smaller than the original
-- **Prometheus metrics** — production monitoring out of the box
-- **Up to 16 secrets** with labels and per-secret connection limits
-- **E2E tested** — the only MTProto proxy with automated tests against real Telegram
+| Файл | Правка | Причина |
+|---|---|---|
+| `src/mtproto/mtproto-proxy-stats.c` | переменная `_mips` → `_maxips` | GCC на MIPS предопределяет макрос `_mips`; объявление превращалось в `int 1 = ...` |
+| `src/common/precise-time.h` | добавлена ветка `#else` для `rdtsc()` | в upstream `rdtsc` есть только для x86/aarch64; на MIPS — `clock_gettime(CLOCK_MONOTONIC)` |
+| `src/common/compat-atomic64.c` | новый файл | libatomic на mipsel не экспортирует `__sync_fetch_and_add_8` и родственные; шим через `__atomic_*` |
+| `Makefile` | `compat-atomic64.o` в `LIB_OBJS_NORMAL` | чтобы файл собирался штатно |
+| `src/net/net-connections.h` | `MAX_CONNECTIONS` под `#ifndef` | дефолт 65536 → BSS ~114 МБ; для роутера 2048 |
+| `src/net/net-events.h` | `MAX_EVENTS` под `#ifndef` | дефолт 1<<19 → ~40 МБ BSS; для роутера 8192 |
+| `src/mtproto/mtproto-proxy.c` | `EXT_CONN_TABLE_SIZE` под `#ifndef` | дефолт 1<<22 → 64 МБ BSS; для роутера 16384 |
+| `.gitignore` | `dist/` | бинарники не коммитим |
 
-## DPI Resistance
+Правок в логике протокола нет — только портируемость и размеры статических таблиц.
+Итог: BSS 8,9 МБ вместо 120 МБ, без этого процесс падает на старте на 124 МБ RAM.
 
-Teleproxy's fake-TLS emulates HTTPS traffic. Automated tests check the framing and camouflage below; they do not prove that a deployment will pass current DPI rules. The Telegram client controls its ClientHello fingerprint, which the proxy cannot rewrite. See the [current limitations and operator playbook](https://teleproxy.github.io/features/dpi-resistance/).
+## Архитектуры
 
-| Layer | Implementation | Verified by |
-|-------|---------------|-------------|
-| ClientHello fingerprint | 517-byte Chrome-profile hello with 15 TLS extensions, GREASE (RFC 8701), X25519 key share, padding | `test_ja3_fingerprint`, `test_tls_extension_completeness`, `test_grease_randomness` |
-| ServerHello emulation | Live-probes the real backend (20 connections), mirrors extension order and encrypted record sizes | `test_emulation_matches_backend`, `test_server_hello_tls13_compliance` |
-| Record sizing | Dynamic Record Sizing mimics TCP slow-start (1450→4096→16144 bytes) with ±100B noise and Weibull inter-record delays | `test_drs_e2e.py` |
-| Active probing resistance | Every failed validation (wrong secret, stale timestamp, unknown SNI, replay, non-TLS) forwarded to real HTTPS backend | `test_wrong_secret_rejected`, `test_unknown_sni_falls_back`, `test_browser_tls_sees_real_backend` |
-| Anti-replay | client\_random dedup cache + 120-second timestamp window + HMAC-SHA256 binding | `test_duplicate_client_random_rejected`, `test_stale_timestamp_rejected` |
-| Encrypted payload entropy | Fake application data passes Shannon entropy validation (H ≥ 7.0 bits/byte) | `test_encrypted_data_entropy` |
+| Архитектура | Модели | Статус |
+|---|---|---|
+| `mipsel` (MIPS32 rel2) | Viva (KN-1910), Giga, Ultra (часть), Air | собирается, проверяется |
+| `mips` (big-endian) | старые Keenetic | тот же скрипт, другой `CC`; правка `_mips` уже нужна |
+| `aarch64` | Giga (KN-1011), Ultra (KN-1811), Hopper | тот же скрипт; `rdtsc` уже есть в upstream |
+| `armv7` | часть младших моделей | тот же скрипт |
 
-Every parser on the attack surface is fuzz-tested on every push (60s smoke) and weekly (30min deep exploration) with ASan + UBSan + libFuzzer. CodeQL and cppcheck run static analysis on every commit. The ASan CI even [verifies itself](https://github.com/teleproxy/teleproxy/blob/main/.github/workflows/test.yml) by re-introducing a known heap overflow and confirming detection.
+Статическая сборка: на роутер кладётся один бинарник, зависимостей нет.
 
-These tests cover specific protocol properties, from JA3 hash computation to encrypted-payload entropy and DRS timing distributions. Connectivity under censorship still needs testing with real Telegram clients on the affected networks.
+## Сборка
 
-## Telegram WEB Proxy
-
-[Telegram Desktop 7.1](https://github.com/telegramdesktop/tdesktop/releases/tag/v7.1.0) added a WEB proxy type. It carries normal MTProxy traffic through an embedded browser over real HTTPS or WebSockets. Telegram's [tproxy-server](https://github.com/telegramdesktop/tproxy-server) relay converts those streams back into TCP connections to a local MTProxy backend.
-
-```text
-Telegram WebView -> HTTPS frontend -> tproxy-server -> MTProxy backend -> Telegram
-```
-
-Teleproxy can serve as the MTProxy backend: `tproxy-server` forwards the standard obfs2 or padded MTProxy stream unchanged. The WEB transport is handled by the relay and HTTPS frontend. When using Teleproxy as the backend:
-
-- Keep the backend listener private and use the same base 16-byte secret in the relay and Teleproxy. WEB clients accept plain or `dd`-prefixed secrets, not fake-TLS `ee` secrets.
-- Use a dedicated backend without `EE_DOMAIN` / `-D`, which enables TLS-only ingress. The public HTTPS connection terminates at the frontend.
-- Leave `PROXY_PROTOCOL` disabled: the reference relay sends raw MTProxy bytes without a PROXY header. Backend IP-based limits and statistics therefore see the relay address, not individual users.
-
-The public TLS handshake comes from the browser engine rather than Telegram's fake-TLS implementation. A compatible HTTPS frontend can also negotiate [Encrypted Client Hello (ECH)](https://www.rfc-editor.org/rfc/rfc9849.html) to hide the inner hostname, and [TLS certificate compression](https://www.rfc-editor.org/rfc/rfc8879.html) to reduce full-handshake certificate bytes. These require client support; ECH also requires the client to obtain the server's ECH configuration. Neither hides the server IP or guarantees access through a blocked network.
-
-## Quick Start
-
-### Docker (recommended)
+Нужен WSL/Debian с `gcc-mipsel-linux-gnu`, `make`, `curl`, `perl`
+(OpenSSL и zlib собираются скриптом в `~/tp-build/out` и переиспользуются):
 
 ```bash
-docker run -d \
-  --name teleproxy \
-  -p 443:443 \
-  -p 127.0.0.1:8888:8888 \
-  --restart unless-stopped \
-  ghcr.io/teleproxy/teleproxy:latest
+sudo apt install -y build-essential curl perl gcc-mipsel-linux-gnu
+git clone https://github.com/R17a/Teleproxy.Keenetic
+cd Teleproxy.Keenetic
+bash tools/build-mipsel.sh          # -> dist/teleproxy.mipsel
+file dist/teleproxy.mipsel          # ELF 32-bit LSB, MIPS32 rel2, statically linked
 ```
 
-Check logs for connection links: `docker logs teleproxy`
+Другая архитектура — поменять `CC`/`AR`/`RANLIB` в начале скрипта
+(`mips-linux-gnu-gcc`, `aarch64-linux-gnu-gcc`, `arm-linux-gnueabihf-gcc`) и
+аргументы `./Configure` для OpenSSL.
 
-### Static Binary
+## Установка на роутер
+
+Файлы из `dist/`:
+
+| Файл | Куда | Права |
+|---|---|---|
+| `teleproxy.mipsel` | `/opt/sbin/teleproxy` | `chmod +x` |
+| `config.toml` | `/opt/etc/teleproxy/config.toml` | `chmod 600` |
+| `S99teleproxy` | `/opt/etc/init.d/S99teleproxy` | `chmod +x` |
+
+```sh
+mkdir -p /opt/etc/teleproxy
+chmod +x /opt/sbin/teleproxy /opt/etc/init.d/S99teleproxy
+chmod 600 /opt/etc/teleproxy/config.toml
+/opt/etc/init.d/S99teleproxy start
+/opt/etc/init.d/S99teleproxy status
+netstat -ltn | grep 8443
+```
+
+Ссылки `tg://proxy?…` прокси печатает при старте:
+
+```sh
+grep 'tg://proxy' /opt/var/log/teleproxy.log | tail
+```
+
+## Конфигурация
+
+```toml
+port = 8443              # 443 на роутере обычно занят (ocserv/nginx, веб-конфигуратор)
+stats_port = 8899
+http_stats = true
+direct = true
+user = "teleproxy"                 # отдельный uid: по нему Susanin метит трафик
+workers = 0
+max_connections = 512
+domain = "cloudflare.com"          # домен-прикрытие для fake-TLS (EE)
+
+[[secret]]
+key = "…32 hex…"
+label = "petrovS"
+```
+
+- **Порт.** Не занимайте `443`, если на роутере работает OpenConnect-сервер или
+  веб-конфигуратор Keenetic: перехват 443 ломает OC+ (проверено).
+- **SOCKS5 не используется.** Выход в туннель обеспечивает Susanin по uid
+  (см. раздел «Совместно с Susanin 0.4.5») — так остаётся одна крипто-схема:
+  MTProto + WireGuard в ядре.
+- **Секреты** можно переносить с другого прокси как есть: клиентская ссылка
+  собирается как `ee` + ключ + hex(domain), меняется только адрес и порт.
+
+## Совместно с Susanin 0.4.5
+
+Схема: прокси работает под отдельным пользователем, Susanin метит **его**
+исходящие соединения по uid и отправляет в интерфейс туннеля. LAN-клиенты при
+этом продолжают ходить своим путём (Xray/tproxy) — правила не пересекаются.
+
+1. Создать пользователя и отдать ему конфиг:
+   ```sh
+   adduser -S -D -H -s /sbin/nologin teleproxy    # busybox
+   chown root:teleproxy /opt/etc/teleproxy/config.toml
+   chmod 640 /opt/etc/teleproxy/config.toml
+   ```
+2. В `/opt/susanin/etc/susanin.conf`:
+   ```ini
+   proxy_uid=teleproxy
+   proxy_egress=nwg0
+   proxy_table=110
+   proxy_mark=0x01000000
+   ```
+3. `susanin restart`, затем проверить:
+   ```sh
+   susanin check | grep proxy_egress
+   ip rule show | grep 'lookup 110'
+   iptables -t mangle -S OUTPUT | grep uid-owner
+   ```
+4. Запустить прокси:
+   ```sh
+   /opt/etc/init.d/S99teleproxy start
+   ```
+5. Проверка маршрута процесса:
+   ```sh
+   ip route get 149.154.167.51 uid $(id -u teleproxy)
+   ```
+   Должно быть `dev nwg0`.
+
+## Проброс порта
+
+Внешний **8443 → `192.168.1.1:8443`** (не 443):
+
+```sh
+WAN=$(ip route show default | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+iptables -t nat -I PREROUTING 1 -i "$WAN" -p tcp --dport 8443 -j REDIRECT --to-ports 8443
+iptables -I INPUT 1 -i "$WAN" -p tcp --dport 8443 -j ACCEPT
+```
+
+Правила живут до перезагрузки; для постоянства — отдельный init-скрипт (см.
+`dist/S99teleproxy` и историю Susanin.Keenetic).
+
+## Требования
+
+- Entware на роутере;
+- работающий Xray/VLESS+REALITY с SOCKS-входом `127.0.0.1:1080`
+  ([Susanin.Keenetic](https://github.com/R17a/Susanin.Keenetic), `egress_type=tproxy`);
+- публичный IP и проброс порта.
+
+## Ветки и обновление с upstream
+
+Проект ведётся как самостоятельная ветка, в upstream ничего не отправляем.
+
+| Ветка | Назначение |
+|---|---|
+| `main` | чистое зеркало `teleproxy/teleproxy` (только fast-forward, наших коммитов нет) |
+| `keenetic` | рабочая ветка: патчи, `tools/`, `dist/`; сюда идут все наши коммиты |
+
+Подтянуть исправления апстрима:
 
 ```bash
-curl -Lo teleproxy https://github.com/teleproxy/teleproxy/releases/latest/download/teleproxy-linux-amd64
-chmod +x teleproxy
-SECRET=$(head -c 16 /dev/urandom | xxd -ps)
-./teleproxy -S "$SECRET" -H 443 --direct -p 8888 --aes-pwd /dev/null
+git fetch upstream
+git checkout main
+git merge --ff-only upstream/main
+git checkout keenetic
+git merge main            # конфликты возможны только в 4 изменённых файлах
+git push origin main keenetic
 ```
 
-## Comparison
+`--ff-only` на `main` гарантирует, что зеркало не разъедется с апстримом, а все наши
+правки останутся в `keenetic`.
 
-| Feature | [Original](https://github.com/TelegramMessenger/MTProxy) | **[Teleproxy](https://github.com/teleproxy/teleproxy)** | [mtg](https://github.com/9seconds/mtg) | [telemt](https://github.com/telemt/telemt) |
-|---------|:---:|:---:|:---:|:---:|
-| **Language** | C | C | Go | Rust |
-| Fake-TLS (EE mode) | Yes | Yes | Yes | Yes |
-| Direct-to-DC mode | No | Yes | Yes | Yes |
-| Multiple secrets | Yes | Yes (up to 16) | No | Yes |
-| Anti-replay protection | Weak | Yes | Yes | Yes |
-| Dynamic Record Sizing | No | Yes | Yes | No |
-| Per-secret byte quotas | No | Yes | No | Yes |
-| IP blocklist / allowlist | No | Yes | Yes | No |
-| Docker image | ~57 MB | ~8 MB | ~3.5 MB | ~5 MB |
-| ARM64 / Apple Silicon | No | Yes | Yes | Yes |
-| Prometheus metrics | No | Yes | Yes | Yes |
-| E2E tests (real Telegram) | No | Yes | No | No |
-| TLS fingerprint validation (CI) | No | Yes | No | No |
-| Fuzz testing (CI) | No | Yes | No | Partial |
+## Откат
 
-[Full comparison →](https://teleproxy.github.io/comparison/)
+```sh
+/opt/etc/init.d/S99teleproxy stop
+chmod -x /opt/etc/init.d/S99teleproxy
+iptables -t nat -D PREROUTING 1
+```
 
-## Docker Images
+## Лицензия
 
-- `ghcr.io/teleproxy/teleproxy:latest`
-- `rkline0x/teleproxy:latest` (Docker Hub)
+GPLv2, как у upstream (`LICENSE`). Автор upstream — команда teleproxy;
+портирование под Keenetic — R17a.
 
-## License
+## Поддержка и связь
 
-GPLv2 — see [LICENSE](LICENSE).
+- Релизы и загрузка: [Teleproxy.Keenetic releases](https://github.com/R17a/Teleproxy.Keenetic/releases)
+- Обсуждение: Telegram-группа [@Susanin_Keenetic](https://t.me/Susanin_Keenetic)
+- Донат: [CloudTips](https://pay.cloudtips.ru/p/dcbf5f2e) · [DonationAlerts](https://www.donationalerts.com/r/dmitriy_r17a)
+
+Проект не связан и не аффилирован с Keenetic, Telegram или авторами upstream.

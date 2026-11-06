@@ -653,9 +653,9 @@ void mtfront_prepare_stats (stats_buffer_t *sb) {
       if (_quota > 0) {
         sb_printf (sb, "secret_%s_quota\t%lld\n", _lbl, _quota);
       }
-      int _mips = tcp_rpcs_get_ext_secret_max_ips (_i);
-      if (_mips > 0) {
-        sb_printf (sb, "secret_%s_max_ips\t%d\n", _lbl, _mips);
+      int _maxips = tcp_rpcs_get_ext_secret_max_ips (_i);
+      if (_maxips > 0) {
+        sb_printf (sb, "secret_%s_max_ips\t%d\n", _lbl, _maxips);
       }
       int64_t _exp = tcp_rpcs_get_ext_secret_expires (_i);
       if (_exp > 0) {

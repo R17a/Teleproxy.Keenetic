@@ -35,7 +35,11 @@
 #include "common/mp-queue.h"
 #include "common/pid.h"
 
+// На Keenetic (124 МБ RAM) дефолтные 65536 дают BSS ~114 МБ и процесс падает.
+// Значение переопределяется при сборке: -DMAX_CONNECTIONS=2048.
+#ifndef MAX_CONNECTIONS
 #define MAX_CONNECTIONS	65536
+#endif
 #define MAX_TARGETS	65536
 #define PRIME_TARGETS	99961
 #define MAX_SPECIAL_LISTEN_SOCKETS	64

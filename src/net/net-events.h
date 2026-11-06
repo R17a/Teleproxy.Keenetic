@@ -30,7 +30,11 @@
 #define EPOLLRDHUP 0x2000
 #endif
 
+// Events[]/ev_heap[]/new_ev_list[] масштабируются от MAX_EVENTS.
+// Дефолт 1<<19 даёт ~40 МБ BSS; для роутера -DMAX_EVENTS=8192.
+#ifndef MAX_EVENTS
 #define	MAX_EVENTS		(1 << 19)
+#endif
 
 #define	EVT_READ	4
 #define EVT_WRITE	2

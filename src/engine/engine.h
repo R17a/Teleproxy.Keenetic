@@ -29,8 +29,15 @@
 #pragma once
 
 // GLIBC DEFINES RTMAX as function
-// engine_init () asserts, that OUT_SIGRTMAX == SIGRTMAX
+// engine_init () asserts, that OUR_SIGRTMAX == SIGRTMAX
+//
+// На MIPS ядро отдаёт 128 номеров сигналов (_NSIG=128), поэтому SIGRTMAX=127,
+// а не 64 как на x86/aarch64. Иначе engine_init падает на assert.
+#if defined(__mips__)
+#define OUR_SIGRTMAX 127
+#else
 #define OUR_SIGRTMAX 64
+#endif
 
 #include "common/common-stats.h"
 #include "engine/engine-rpc.h"

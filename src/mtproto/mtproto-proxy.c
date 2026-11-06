@@ -94,7 +94,11 @@ const char FullVersionStr[] = VERSION_STR " compiled at " __DATE__ " " __TIME__ 
 #endif
 " after commit " COMMIT;
 
+// Таблица внешних соединений: дефолт 1<<22 даёт 64 МБ BSS.
+// Для роутера переопределяется при сборке (-DEXT_CONN_TABLE_SIZE=16384).
+#ifndef EXT_CONN_TABLE_SIZE
 #define EXT_CONN_TABLE_SIZE	(1 << 22)
+#endif
 #define EXT_CONN_HASH_SHIFT	20
 #define EXT_CONN_HASH_SIZE	(1 << EXT_CONN_HASH_SHIFT)
 
