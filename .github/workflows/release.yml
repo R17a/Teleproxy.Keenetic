@@ -14,7 +14,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,21 +27,41 @@ jobs:
             gcc-mipsel-linux-gnu gcc-mips-linux-gnu \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
 
+      - name: Verify compilers
+        run: |
+          set -e
+          for c in mipsel-linux-gnu-gcc mips-linux-gnu-gcc aarch64-linux-gnu-gcc arm-linux-gnueabihf-gcc gcc; do
+            printf '%-30s ' "$c"
+            command -v "$c" || { echo "MISSING"; exit 1; }
+          done
+
       - name: Build (all arches)
-        run: bash tools/build-arch.sh all
+        run: |
+          set -o pipefail
+          bash tools/build-arch.sh all 2>&1 | tee build-full.log
 
       - name: Package .ipk
         run: |
           VER="${GITHUB_REF_NAME#v}"
           if [ -z "$VER" ] || [ "$VER" = "$GITHUB_REF_NAME" ]; then VER="1.0"; fi
           cp packaging/config.toml.example dist/config.toml
-          sh packaging/make-ipk.sh --version "$VER"
+          sh packaging/make-ipk.sh --version "$VER" 2>&1 | tee -a build-full.log
 
       - name: Checksums
         run: |
           cd dist
           sha256sum ./teleproxy.* ./teleproxy-keenetic_*.ipk > SHA256SUMS
           cat SHA256SUMS
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            build-full.log
+            /home/runner/tp-build/build-*.log
+          if-no-files-found: warn
 
       - name: Upload artifacts (any run)
         uses: actions/upload-artifact@v4

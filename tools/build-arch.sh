@@ -44,7 +44,11 @@ pick_ossl_target() { # pick_ossl_target <arch> -> "target [extra flags]"
 build_one() { # build_one <arch>
     local ARCH=$1
     local CC; CC=$(pick_cc "$ARCH") || { echo "unknown arch: $ARCH" >&2; return 1; }
-    command -v "$CC" >/dev/null 2>&1 || { echo "нет компилятора $CC (пропускаю $ARCH)"; return 1; }
+    if ! command -v "$CC" >/dev/null 2>&1; then
+        echo "ОШИБКА: нет компилятора $CC для $ARCH (пакет gcc-${ARCH}-linux-gnu*)" >&2
+        return 1
+    fi
+    echo "[$ARCH] CC=$(command -v "$CC")"
 
     local OUT=$B/out/$ARCH
     local AR=${CC%gcc}ar
@@ -97,6 +101,7 @@ build_one() { # build_one <arch>
     MAXEVENTS=${MAXEVENTS:-8192}
     EXTCONN=${EXT_CONN_TABLE_SIZE:-16384}
     cd "$REPO"
+    rm -f objs/bin/teleproxy        # чтобы не скопировать бинарник прошлой арх
     make clean >/dev/null 2>&1 || true
     make CC="$CC" \
       CFLAGS="-O2 -std=gnu11 -Wall -fno-strict-aliasing -fno-strict-overflow -fwrapv -fno-common \
