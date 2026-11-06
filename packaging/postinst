@@ -1,29 +1,40 @@
 #!/bin/sh
-# postinst: пользователь teleproxy, каталоги, конфиг-пример (существующий не трогаем).
+# postinst: пользователь, каталоги, конфиг-пример, ключи P5 в Susanin, проброс порта.
 #
-# Важно: раньше создание пользователя было с `|| true`, и на Keenetic (busybox
-# adduser с другими флагами) оно молча не срабатывало — прокси потом падал с
-# "can't find the user teleproxy", а конфиг оставался root:root.
+# Историческая проблема: на Keenetic `adduser -S -D -H` может не сработать, а
+# `|| true` это скрывал. Без пользователя teleproxy не ставится правило
+# `iptables -m owner --uid-owner teleproxy`, и трафик прокси идёт мимо туннеля.
+set -e
+
+USER_NAME=teleproxy
+BASE_UID=1001
 
 make_user() {
-    _u="$1"
-    id -u "$_u" >/dev/null 2>&1 && return 0
+    id -u "$USER_NAME" >/dev/null 2>&1 && return 0
 
-    # busybox (Keenetic): -S системный, -D без пароля, -H без home
-    adduser -S -D -H -s /sbin/nologin "$_u" >/dev/null 2>&1 && return 0
-    # busybox с явным home (некоторые сборки требуют)
-    adduser -S -D -H -h /opt/var/empty -s /sbin/nologin "$_u" >/dev/null 2>&1 && return 0
-    # Entware/Debian-вариант
-    useradd -r -M -s /sbin/nologin "$_u" >/dev/null 2>&1 && return 0
+    adduser -S -D -H -s /sbin/nologin "$USER_NAME" >/dev/null 2>&1 && return 0
+    adduser -S -D -H -h /opt/var/empty -s /sbin/nologin "$USER_NAME" >/dev/null 2>&1 && return 0
+    useradd -r -M -s /sbin/nologin "$USER_NAME" >/dev/null 2>&1 && return 0
+
+    # Последний вариант: прямая запись в /etc/passwd (Keenetic/OpenWrt-подобные).
+    if [ -w /etc/passwd ]; then
+        _uid=$BASE_UID
+        while awk -F: -v u="$_uid" '$3==u {found=1} END {exit !found}' /etc/passwd 2>/dev/null; do
+            _uid=$((_uid + 1))
+        done
+        grep -q "^${USER_NAME}:" /etc/passwd 2>/dev/null || \
+            echo "${USER_NAME}:x:${_uid}:${_uid}::/opt/var/empty:/sbin/nologin" >> /etc/passwd
+        grep -q "^${USER_NAME}:" /etc/group 2>/dev/null || \
+            echo "${USER_NAME}:x:${_uid}:" >> /etc/group
+        return 0
+    fi
     return 1
 }
 
-USER_OK=0
-if make_user teleproxy && id -u teleproxy >/dev/null 2>&1; then
-    USER_OK=1
-fi
-
 mkdir -p /opt/etc/teleproxy /opt/var/log /opt/var/run /opt/var/empty
+
+USER_OK=0
+make_user && id -u "$USER_NAME" >/dev/null 2>&1 && USER_OK=1
 
 if [ ! -f /opt/etc/teleproxy/config.toml ]; then
     if [ -f /opt/share/teleproxy/config.toml.example ]; then
@@ -35,20 +46,47 @@ else
 fi
 
 if [ "$USER_OK" = "1" ]; then
-    chown root:teleproxy /opt/etc/teleproxy/config.toml 2>/dev/null || \
-        chown root:$(id -gn teleproxy) /opt/etc/teleproxy/config.toml 2>/dev/null || true
+    chown root:"$USER_NAME" /opt/etc/teleproxy/config.toml 2>/dev/null || true
     chmod 640 /opt/etc/teleproxy/config.toml
-    echo "[teleproxy] пользователь teleproxy: uid=$(id -u teleproxy)"
+    echo "[teleproxy] пользователь $USER_NAME: uid=$(id -u "$USER_NAME")"
 else
-    # Пользователя создать не удалось — прокси под ним не запустится.
-    # Не оставляем нечитаемый конфиг: разрешаем чтение и предупреждаем.
     chmod 644 /opt/etc/teleproxy/config.toml
-    echo "[teleproxy] ВНИМАНИЕ: пользователя teleproxy создать не удалось."
-    echo "[teleproxy] Запуск будет падать с 'can't find the user teleproxy'."
-    echo "[teleproxy] Создайте вручную: adduser -S -D -H -s /sbin/nologin teleproxy"
-    echo "[teleproxy] либо поставьте в конфиге user = \"root\"."
+    echo "[teleproxy] ВНИМАНИЕ: пользователя $USER_NAME создать не удалось."
+    echo "[teleproxy]   поставьте в конфиге user = \"root\" или создайте вручную:"
+    echo "[teleproxy]   echo 'teleproxy:x:1001:1001::/opt/var/empty:/sbin/nologin' >> /etc/passwd"
+fi
+
+# --- P5 в Susanin: добавляем ключи, если конфиг есть и ключей ещё нет ---------
+SC=/opt/susanin/etc/susanin.conf
+if [ -f "$SC" ]; then
+    if ! grep -q '^proxy_uid=' "$SC" 2>/dev/null; then
+        cat >> "$SC" <<EOF
+
+# P5: трафик прокси на роутере -> туннель (добавлено postinst teleproxy)
+proxy_uid=${USER_NAME}
+proxy_egress=nwg0
+proxy_table=110
+proxy_mark=0x01000000
+EOF
+        echo "[teleproxy] в susanin.conf добавлены proxy_uid/proxy_egress"
+        if [ -x /opt/susanin/tools/susanin.sh ]; then
+            /opt/susanin/tools/susanin.sh restart >/dev/null 2>&1 || true
+            echo "[teleproxy] susanin перезапущен"
+        fi
+    else
+        echo "[teleproxy] P5 в susanin.conf уже настроен"
+    fi
+else
+    echo "[teleproxy] Susanin не найден — ключи P5 добавьте сами:"
+    echo "[teleproxy]   proxy_uid=${USER_NAME} / proxy_egress=nwg0 / proxy_table=110"
+fi
+
+# --- проброс порта 8443 ------------------------------------------------------
+if [ -x /opt/etc/init.d/S98teleproxy-fw ]; then
+    /opt/etc/init.d/S98teleproxy-fw start || \
+        echo "[teleproxy] ВНИМАНИЕ: проброс 8443 не встал (нет WAN?)"
 fi
 
 echo "[teleproxy] запуск: /opt/etc/init.d/S99teleproxy start"
-echo "[teleproxy] выход в туннель: proxy_uid=teleproxy, proxy_egress=nwg0 в susanin.conf"
+echo "[teleproxy] проверка: susanin check | grep proxy_egress; iptables -t mangle -S OUTPUT | grep uid-owner"
 exit 0

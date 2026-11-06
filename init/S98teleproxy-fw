@@ -1,0 +1,78 @@
+#!/bin/sh
+# S98teleproxy-fw — проброс порта MTProxy (8443) на роутер.
+#
+# iptables не переживает перезагрузку/пересборку правил NDM, поэтому правило
+# ставится при каждом старте. Скрипт идемпотентный: одноразовый запуск при
+# установке и при загрузке (S98 выполняется раньше S99teleproxy).
+#
+#   порт 8443 с WAN   -> localhost:8443
+#   порт 8443 из LAN  -> localhost:8443 (по внешнему IP, чтобы работала ссылка)
+#
+# Порт 443 не используется: на роутере его занимает ocserv/nginx (OC+ и веб-конфигуратор).
+
+PORT=8443
+PIDWAIT=0
+
+apply_rules() {
+    WAN=$(ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+    [ -n "$WAN" ] && [ "$WAN" != "link" ] || return 1
+
+    iptables -w -t nat -C PREROUTING -i "$WAN" -p tcp --dport "$PORT" \
+        -j REDIRECT --to-ports "$PORT" 2>/dev/null || \
+    iptables -w -t nat -I PREROUTING 1 -i "$WAN" -p tcp --dport "$PORT" \
+        -j REDIRECT --to-ports "$PORT" 2>/dev/null || return 1
+
+    iptables -w -C INPUT -i "$WAN" -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || \
+    iptables -w -I INPUT 1 -i "$WAN" -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || true
+
+    # LAN: ссылка указывает на внешний IP, поэтому заворачиваем и его.
+    EXT=$(ip route get 8.8.8.8 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") { print $(i+1); exit }}')
+    if [ -n "$EXT" ]; then
+        for IF in br0 br1; do
+            iptables -w -t nat -C PREROUTING -i "$IF" -p tcp -d "$EXT" --dport "$PORT" \
+                -j REDIRECT --to-ports "$PORT" 2>/dev/null || \
+            iptables -w -t nat -I PREROUTING 1 -i "$IF" -p tcp -d "$EXT" --dport "$PORT" \
+                -j REDIRECT --to-ports "$PORT" 2>/dev/null || true
+        done
+    fi
+    return 0
+}
+
+case "${1:-start}" in
+    start)
+        # при загрузке WAN может подниматься позже — ждём до 60 с
+        i=0
+        while [ "$i" -lt 12 ]; do
+            apply_rules && break
+            i=$((i + 1))
+            [ "$i" -lt 12 ] && sleep 5
+        done
+        if apply_rules; then
+            echo "teleproxy-fw: порт $PORT проброшен (wan=$WAN)"
+        else
+            echo "teleproxy-fw: не удалось поставить правила (нет WAN?)" >&2
+            exit 1
+        fi
+        ;;
+    stop)
+        WAN=$(ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+        [ -n "$WAN" ] && iptables -w -t nat -D PREROUTING -i "$WAN" -p tcp --dport "$PORT" \
+            -j REDIRECT --to-ports "$PORT" 2>/dev/null || true
+        [ -n "$WAN" ] && iptables -w -D INPUT -i "$WAN" -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || true
+        EXT=$(ip route get 8.8.8.8 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") { print $(i+1); exit }}')
+        if [ -n "$EXT" ]; then
+            for IF in br0 br1; do
+                iptables -w -t nat -D PREROUTING -i "$IF" -p tcp -d "$EXT" --dport "$PORT" \
+                    -j REDIRECT --to-ports "$PORT" 2>/dev/null || true
+            done
+        fi
+        echo "teleproxy-fw: правила сняты"
+        ;;
+    status)
+        iptables -w -t nat -S PREROUTING | grep -F -- "--dport $PORT" || echo "правил нет"
+        ;;
+    *)
+        echo "usage: $0 {start|stop|status}" >&2
+        exit 1
+        ;;
+esac

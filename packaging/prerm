@@ -1,6 +1,9 @@
 #!/bin/sh
-# prerm: остановить службу перед удалением/обновлением.
+# prerm: остановить службу и снять правила проброса перед удалением/обновлением.
 if [ -x /opt/etc/init.d/S99teleproxy ]; then
     /opt/etc/init.d/S99teleproxy stop >/dev/null 2>&1 || true
+fi
+if [ -x /opt/etc/init.d/S98teleproxy-fw ]; then
+    /opt/etc/init.d/S98teleproxy-fw stop >/dev/null 2>&1 || true
 fi
 exit 0

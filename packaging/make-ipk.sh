@@ -61,7 +61,8 @@ build_one() { # build_one <arch> <binary>
     cp "$_bin" "$_d/opt/sbin/teleproxy"
     chmod 755 "$_d/opt/sbin/teleproxy"
     cp "$SRC/init/S99teleproxy" "$_d/opt/etc/init.d/S99teleproxy"
-    chmod 755 "$_d/opt/etc/init.d/S99teleproxy"
+    cp "$SRC/init/S98teleproxy-fw" "$_d/opt/etc/init.d/S98teleproxy-fw"
+    chmod 755 "$_d/opt/etc/init.d/S99teleproxy" "$_d/opt/etc/init.d/S98teleproxy-fw"
     cp "$SRC/packaging/config.toml.example" "$_d/opt/share/teleproxy/config.toml.example"
     chmod 644 "$_d/opt/share/teleproxy/config.toml.example"
 
