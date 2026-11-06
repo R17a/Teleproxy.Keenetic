@@ -69,7 +69,14 @@ say "скачано: $TMP/$PKG"
 [ "$DO_INSTALL" = 1 ] || { say "--no-install: остановился"; exit 0; }
 
 say "ставлю пакет"
-opkg install "$TMP/$PKG" || die "opkg install не удался"
+# Если версия уже стоит, opkg не станет переустанавливать файлы («up to date»),
+# а обновлённые init-скрипты/конфиг-пример при этом не применяются. Поэтому при
+# повторной установке той же версии — --force-reinstall.
+if opkg list-installed 2>/dev/null | grep -q "^teleproxy-keenetic "; then
+    opkg install --force-reinstall "$TMP/$PKG" || die "opkg install --force-reinstall не удался"
+else
+    opkg install "$TMP/$PKG" || die "opkg install не удался"
+fi
 
 # Всё остальное делает postinst пакета: идентификатор (имя или числовой uid),
 # права на конфиг, ключи P5 в Susanin, проброс 8443 и запуск службы.

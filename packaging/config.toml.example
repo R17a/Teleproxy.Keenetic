@@ -16,6 +16,10 @@ workers = 0
 max_connections = 256
 domain = "cloudflare.com"
 
+# Апстрим через локальный SOCKS Xray (Reality). Включает postinst,
+# если поднят tools/xray-socks.sh enable. Без него — direct.
+# socks5 = "socks5://127.0.0.1:1080"
+
 # Секрет: 32 hex-символа (16 байт). Добавьте свои блоки [[secret]] по образцу.
 [[secret]]
 key = "72995647c48776f584339f198f0ad2b7"

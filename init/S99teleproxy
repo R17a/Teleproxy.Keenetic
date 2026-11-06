@@ -1,35 +1,63 @@
 #!/bin/sh
-# S99teleproxy — запуск teleproxy на Keenetic (Entware)
+# S99teleproxy — запуск teleproxy на Keenetic (Entware) под супервизором.
+#
+# teleproxy иногда падает на ассерте `mpq_push_w: ... MQ_MAGIC_SEM` при обрыве
+# исходящего соединения. Без присмотра прокси просто умирает, и клиенты
+# отваливаются. Поэтому держим его в фоновом цикле-супервизоре: упал — подняли.
 PIDFILE=/opt/var/run/teleproxy.pid
 LOG=/opt/var/log/teleproxy.log
 CFG=/opt/etc/teleproxy/config.toml
 BIN=/opt/sbin/teleproxy
 
-# Лимиты под 124 МБ RAM:
-#   --msg-buffers-size 16M  — пул буферов (дефолт 256 МБ => OOM при видео)
-#   --connections 512       — потолок соединений (дефолт из сборки 2048)
-#   --max-special-connections 128
-# Буферы и потолок соединений умеренные: роутер на 124 МБ без swap, а рядом
-# работают Xray и NDM. 16 МБ буферов давали давление на память (kswapd/OOM).
+# Лимиты под 124 МБ RAM (рядом живут Xray и NDM):
+#   --msg-buffers-size 4M   (было 16M — давило на память, kswapd/OOM)
+#   --connections 256       (дефолт из сборки 2048)
+#   --max-special-connections 64
 EXTRA="--msg-buffers-size 4194304 --connections 256 --max-special-connections 64"
+
+running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+
+supervise() {
+    # $1 — pid-файл; пишем свой pid, чтобы stop мог снять и цикл, и ребёнка.
+    while :; do
+        "$BIN" --config "$CFG" $EXTRA >>"$LOG" 2>&1 &
+        child=$!
+        wait "$child"
+        rc=$?
+        # Нормальный выход по SIGTERM от stop: выходим из цикла.
+        kill -0 $$ 2>/dev/null || exit 0
+        if [ "$rc" -eq 0 ] || [ "$rc" -eq 143 ]; then
+            exit 0
+        fi
+        echo "[supervisor] teleproxy завершился rc=$rc — перезапуск через 3 с" >>"$LOG"
+        sleep 3
+    done
+}
 
 case "$1" in
 start)
-    [ -f "$PIDFILE" ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null && exit 0
+    running && exit 0
     mkdir -p /opt/var/log /opt/var/run
     [ -x "$BIN" ] || { echo "no $BIN"; exit 1; }
     [ -f "$CFG" ] || { echo "no $CFG"; exit 1; }
-    "$BIN" --config "$CFG" $EXTRA >>"$LOG" 2>&1 &
+    supervise &
     echo $! > "$PIDFILE"
-    echo "started pid $(cat $PIDFILE)"
+    echo "started pid $(cat "$PIDFILE")"
     ;;
 stop)
-    [ -f "$PIDFILE" ] && kill "$(cat $PIDFILE)" 2>/dev/null
+    if [ -f "$PIDFILE" ]; then
+        _sp=$(cat "$PIDFILE" 2>/dev/null)
+        # Сначала снимаем супервизор, чтобы он не поднял ребёнка снова,
+        # затем самого teleproxy.
+        [ -n "$_sp" ] && kill "$_sp" 2>/dev/null
+        pkill -f "$BIN --config $CFG" 2>/dev/null || true
+        sleep 1
+    fi
     rm -f "$PIDFILE"
     echo stopped
     ;;
 reload)
-    [ -f "$PIDFILE" ] && kill -HUP "$(cat "$PIDFILE")" 2>/dev/null && echo reloaded
+    pkill -HUP -f "$BIN --config $CFG" 2>/dev/null && echo reloaded
     ;;
 restart)
     "$0" stop
@@ -37,8 +65,10 @@ restart)
     "$0" start
     ;;
 status)
-    if [ -f "$PIDFILE" ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
-        echo RUNNING pid "$(cat $PIDFILE)"
+    if running; then
+        echo RUNNING supervisor pid "$(cat "$PIDFILE")"
+    elif pidof teleproxy >/dev/null 2>&1; then
+        echo RUNNING pid "$(pidof teleproxy)" "(без супервизора)"
     else
         echo STOPPED
     fi

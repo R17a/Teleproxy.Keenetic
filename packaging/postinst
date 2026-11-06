@@ -96,6 +96,33 @@ else
     echo "[teleproxy]   proxy_uid=${PROXY_ID} / proxy_egress=nwg0 / proxy_table=110"
 fi
 
+# --- выбор апстрима: Xray SOCKS (Reality) или P5 через WireGuard --------------
+# Если в Xray поднят локальный SOCKS (tools/xray-socks.sh enable), гоняем MTProto
+# по Reality: это единственный канал, который не душат. P5 в этом случае не нужен.
+if netstat -ltn 2>/dev/null | grep -q '127\.0\.0\.1:1080'; then
+    if ! grep -q '^socks5[[:space:]]*=' /opt/etc/teleproxy/config.toml 2>/dev/null; then
+        # ВАЖНО: ключ обязан быть ДО первого [[secret]] — после заголовка таблицы
+        # TOML относит его к этой таблице, и парсер его не видит.
+        # busybox sed не поддерживает адрес `0,/re/`, поэтому awk.
+        awk '!done && /^\[\[secret\]\]/ {
+                 print "socks5 = \"socks5://127.0.0.1:1080\"";
+                 print "";
+                 done = 1
+             }
+             { print }' /opt/etc/teleproxy/config.toml > /opt/etc/teleproxy/config.toml.new \
+            && mv -f /opt/etc/teleproxy/config.toml.new /opt/etc/teleproxy/config.toml
+        echo "[teleproxy] апстрим: Xray SOCKS 127.0.0.1:1080 (Reality)"
+    else
+        echo "[teleproxy] апстрим: Xray SOCKS (уже настроен)"
+    fi
+    if [ -f "$SC" ]; then
+        sed -i 's/^proxy_uid=.*/proxy_uid=/; s/^proxy_egress=.*/proxy_egress=/' "$SC" 2>/dev/null || true
+        echo "[teleproxy] P5 отключён (proxy_uid=), трафик идёт в Xray"
+    fi
+else
+    echo "[teleproxy] Xray SOCKS не найден — апстрим через proxy_egress (nwg0)"
+fi
+
 # --- 4. проброс порта 8443 ---------------------------------------------------
 if [ -x /opt/etc/init.d/S98teleproxy-fw ]; then
     /opt/etc/init.d/S98teleproxy-fw start || \
