@@ -1,0 +1,10 @@
+# Нормализация переводов строк: на роутере скрипты с CRLF не запускаются
+# ("bad interpreter: /bin/sh^M"), поэтому для них жёстко LF.
+* text=auto
+*.sh   text eol=lf
+init/* text eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.md   text eol=lf
+*.toml text eol=lf
+Makefile text eol=lf

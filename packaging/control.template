@@ -1,0 +1,12 @@
+Package: teleproxy-keenetic
+Version: {{VER}}
+Depends: libc, libopenssl
+Source: https://github.com/R17a/Teleproxy.Keenetic
+Section: net
+Priority: optional
+Maintainer: R17a
+Architecture: {{ARCH}}
+Installed-Size: {{SIZE}}
+Description: MTProto proxy with fake-TLS for Keenetic (Entware)
+ High-performance MTProto proxy (C) with fake-TLS camouflage, direct-to-DC
+ and static binary. Ported for Keenetic architectures.

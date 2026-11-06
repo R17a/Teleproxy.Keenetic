@@ -36,6 +36,10 @@ reclaim, load 10+ и зависание сети).
 Выход в туннель — по uid через [Susanin.Keenetic](https://github.com/R17a/Susanin.Keenetic)
 0.4.5 (`proxy_uid` / `proxy_egress`), без SOCKS и без `ip route` в main-таблице.
 
+> Готовые бинарники `teleproxy.<arch>` и пакеты `.ipk` лежат в
+> [Releases](https://github.com/R17a/Teleproxy.Keenetic/releases), а не в git:
+> каталог `dist/` добавлен в `.gitignore`.
+
 ## Что изменено относительно upstream
 
 | Файл | Правка | Причина |
@@ -57,52 +61,67 @@ reclaim, load 10+ и зависание сети).
 | Архитектура | Модели | Статус |
 |---|---|---|
 | `mipsel` (MIPS32 rel2) | Viva (KN-1910), Giga, Ultra (часть), Air | собирается, проверяется |
-| `mips` (big-endian) | старые Keenetic | тот же скрипт, другой `CC`; правка `_mips` уже нужна |
-| `aarch64` | Giga (KN-1011), Ultra (KN-1811), Hopper | тот же скрипт; `rdtsc` уже есть в upstream |
-| `armv7` | часть младших моделей | тот же скрипт |
+| `mips` (big-endian) | старые Keenetic | собирается |
+| `aarch64` | Giga (KN-1011), Ultra (KN-1811), Hopper | собирается |
+| `armv7` | часть младших моделей | собирается |
+| `x86_64` | Entware на ПК/VM | собирается |
 
 Статическая сборка: на роутер кладётся один бинарник, зависимостей нет.
 
 ## Сборка
 
-Нужен WSL/Debian с `gcc-mipsel-linux-gnu`, `make`, `curl`, `perl`
-(OpenSSL и zlib собираются скриптом в `~/tp-build/out` и переиспользуются):
+Нужен WSL/Debian с кросс-компиляторами, `make`, `curl`, `perl`
+(OpenSSL и zlib собираются скриптом в `~/tp-build/out/<arch>` и переиспользуются):
 
 ```bash
-sudo apt install -y build-essential curl perl gcc-mipsel-linux-gnu
+sudo apt install -y build-essential curl perl \
+  gcc-mipsel-linux-gnu gcc-mips-linux-gnu gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
 git clone https://github.com/R17a/Teleproxy.Keenetic
 cd Teleproxy.Keenetic
-bash tools/build-mipsel.sh          # -> dist/teleproxy.mipsel
-file dist/teleproxy.mipsel          # ELF 32-bit LSB, MIPS32 rel2, statically linked
+
+bash tools/build-arch.sh mipsel     # -> dist/teleproxy.mipsel
+bash tools/build-arch.sh all        # mipsel mips aarch64 armv7 x86_64
+file dist/teleproxy.mipsel
 ```
 
-Другая архитектура — поменять `CC`/`AR`/`RANLIB` в начале скрипта
-(`mips-linux-gnu-gcc`, `aarch64-linux-gnu-gcc`, `arm-linux-gnueabihf-gcc`) и
-аргументы `./Configure` для OpenSSL.
+Скрипт сам выбирает цель OpenSSL (`linux-generic32`/`linux-aarch64`/`linux-armv4`/
+`linux-x86_64`), собирает `libcrypto.a` и `libz.a` под нужную архитектуру и линкует
+`teleproxy` статически. Лимиты памяти (`MAX_CONNECTIONS`, `MAX_EVENTS`,
+`EXT_CONN_TABLE_SIZE`) можно переопределить переменными окружения.
 
 ## Установка на роутер
 
-Файлы из `dist/`:
+Быстрее всего — пакетом из релиза (создаёт пользователя `teleproxy`, каталоги и
+конфиг-пример, существующий конфиг не трогает):
+
+```sh
+wget -qO- https://raw.githubusercontent.com/R17a/Teleproxy.Keenetic/main/install-keenetic.sh | sh
+```
+
+Или вручную из `dist/`:
 
 | Файл | Куда | Права |
 |---|---|---|
-| `teleproxy.mipsel` | `/opt/sbin/teleproxy` | `chmod +x` |
-| `config.toml` | `/opt/etc/teleproxy/config.toml` | `chmod 600` |
-| `S99teleproxy` | `/opt/etc/init.d/S99teleproxy` | `chmod +x` |
+| `teleproxy.<arch>` | `/opt/sbin/teleproxy` | `chmod +x` |
+| `config.toml` | `/opt/etc/teleproxy/config.toml` | `chown root:teleproxy`, `chmod 640` |
+| `init/S99teleproxy` | `/opt/etc/init.d/S99teleproxy` | `chmod +x` |
 
 ```sh
-mkdir -p /opt/etc/teleproxy
+adduser -S -D -H -s /sbin/nologin teleproxy
+mkdir -p /opt/etc/teleproxy /opt/var/log /opt/var/run
 chmod +x /opt/sbin/teleproxy /opt/etc/init.d/S99teleproxy
-chmod 600 /opt/etc/teleproxy/config.toml
+chown root:teleproxy /opt/etc/teleproxy/config.toml
+chmod 640 /opt/etc/teleproxy/config.toml
 /opt/etc/init.d/S99teleproxy start
 /opt/etc/init.d/S99teleproxy status
 netstat -ltn | grep 8443
 ```
 
-Ссылки `tg://proxy?…` прокси печатает при старте:
+Ссылку для клиента собирает отдельный хелпер (прокси её не печатает):
 
 ```sh
-grep 'tg://proxy' /opt/var/log/teleproxy.log | tail
+sh tools/make-link.sh <32-hex-secret> <EXTERNAL_IP> 8443 cloudflare.com
+# -> tg://proxy?server=...&port=8443&secret=ee<secret><hex(domain)>
 ```
 
 ## Конфигурация
@@ -119,7 +138,7 @@ domain = "cloudflare.com"          # домен-прикрытие для fake-T
 
 [[secret]]
 key = "…32 hex…"
-label = "petrovS"
+label = "myphone"
 ```
 
 - **Порт.** Не занимайте `443`, если на роутере работает OpenConnect-сервер или
@@ -127,8 +146,39 @@ label = "petrovS"
 - **SOCKS5 не используется.** Выход в туннель обеспечивает Susanin по uid
   (см. раздел «Совместно с Susanin 0.4.5») — так остаётся одна крипто-схема:
   MTProto + WireGuard в ядре.
-- **Секреты** можно переносить с другого прокси как есть: клиентская ссылка
-  собирается как `ee` + ключ + hex(domain), меняется только адрес и порт.
+- **Секретов может быть несколько**: каждый блок `[[secret]]` — отдельный
+  пользователь/устройство со своим ключом и меткой.
+
+## Ссылки для клиентов
+
+Teleproxy, в отличие от Python-версии, ссылку не печатает — она собирается из
+ключа, адреса, порта и домена-прикрытия:
+
+```text
+secret = "ee" + <32-hex key> + hex(<domain>)
+tg://proxy?server=<host>&port=<port>&secret=<secret>
+```
+
+`hex("cloudflare.com")` = `636c6f7564666c6172652e636f6d`
+
+Готовый хелпер:
+
+```sh
+sh tools/make-link.sh <32-hex key> <host> <port> [domain]
+# пример:
+sh tools/make-link.sh 72995647c48776f584339f198f0ad2b7 <EXTERNAL_IP> 8443 cloudflare.com
+```
+
+Вывод:
+
+```text
+tg://proxy?server=<EXTERNAL_IP>&port=8443&secret=ee72995647c48776f584339f198f0ad2b7636c6f7564666c6172652e636f6d
+https://t.me/proxy?server=<EXTERNAL_IP>&port=8443&secret=ee72995647c48776f584339f198f0ad2b7636c6f7564666c6172652e636f6d
+```
+
+Важно: **порт в ссылке — внешний**, тот, что проброшен на роутер (например `8443`,
+а не локальный, если проброс идёт `443 → 8443`). Для пересылки в чат удобнее форма
+`https://t.me/proxy?…` — секрет тот же.
 
 ## Совместно с Susanin 0.4.5
 

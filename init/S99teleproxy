@@ -1,0 +1,42 @@
+#!/bin/sh
+# S99teleproxy — запуск teleproxy на Keenetic (Entware)
+PIDFILE=/opt/var/run/teleproxy.pid
+LOG=/opt/var/log/teleproxy.log
+CFG=/opt/etc/teleproxy/config.toml
+BIN=/opt/sbin/teleproxy
+
+# Лимиты под 124 МБ RAM:
+#   --msg-buffers-size 16M  — пул буферов (дефолт 256 МБ => OOM при видео)
+#   --connections 512       — потолок соединений (дефолт из сборки 2048)
+#   --max-special-connections 128
+EXTRA="--msg-buffers-size 16777216 --connections 512 --max-special-connections 128"
+
+case "$1" in
+start)
+    [ -f "$PIDFILE" ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null && exit 0
+    mkdir -p /opt/var/log /opt/var/run
+    [ -x "$BIN" ] || { echo "no $BIN"; exit 1; }
+    [ -f "$CFG" ] || { echo "no $CFG"; exit 1; }
+    "$BIN" --config "$CFG" $EXTRA >>"$LOG" 2>&1 &
+    echo $! > "$PIDFILE"
+    echo "started pid $(cat $PIDFILE)"
+    ;;
+stop)
+    [ -f "$PIDFILE" ] && kill "$(cat $PIDFILE)" 2>/dev/null
+    rm -f "$PIDFILE"
+    echo stopped
+    ;;
+reload)
+    [ -f "$PIDFILE" ] && kill -HUP "$(cat $PIDFILE)" 2>/dev/null && echo reloaded
+    ;;
+status)
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
+        echo RUNNING pid "$(cat $PIDFILE)"
+    else
+        echo STOPPED
+    fi
+    ;;
+*)
+    echo "usage: $0 {start|stop|reload|status}"; exit 1
+    ;;
+esac

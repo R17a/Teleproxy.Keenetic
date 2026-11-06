@@ -1,0 +1,25 @@
+#!/bin/sh
+# postinst: пользователь teleproxy, каталоги, конфиг-пример (существующий не трогаем).
+set -e
+
+if ! id -u teleproxy >/dev/null 2>&1; then
+    adduser -S -D -H -s /sbin/nologin teleproxy >/dev/null 2>&1 || \
+        useradd -r -s /sbin/nologin teleproxy >/dev/null 2>&1 || true
+fi
+
+mkdir -p /opt/etc/teleproxy /opt/var/log /opt/var/run
+
+if [ ! -f /opt/etc/teleproxy/config.toml ]; then
+    if [ -f /opt/share/teleproxy/config.toml.example ]; then
+        cp /opt/share/teleproxy/config.toml.example /opt/etc/teleproxy/config.toml
+        chown root:teleproxy /opt/etc/teleproxy/config.toml 2>/dev/null || true
+        chmod 640 /opt/etc/teleproxy/config.toml
+        echo "[teleproxy] создан /opt/etc/teleproxy/config.toml — впишите свои секреты"
+    fi
+else
+    echo "[teleproxy] существующий config.toml сохранён"
+fi
+
+echo "[teleproxy] запуск: /opt/etc/init.d/S99teleproxy start"
+echo "[teleproxy] выход в туннель: proxy_uid=teleproxy, proxy_egress=nwg0 в susanin.conf"
+exit 0

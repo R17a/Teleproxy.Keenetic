@@ -1,15 +1,28 @@
-# Teleproxy.Keenetic v1.0 (mipsel)
+# Teleproxy.Keenetic v1.0
 
-Первый релиз форка: upstream-код teleproxy, портированный под MIPS32 (Keenetic),
-плюс готовый статический бинарник.
+Первый релиз форка: upstream-код teleproxy, портированный под архитектуры
+Keenetic (Entware), плюс готовые статические бинарники.
 
 ## Что внутри
 
-- `teleproxy.mipsel` — статический бинарник (5.6 МБ), зависимостей нет;
+- `teleproxy.<arch>` — статические бинарники (~4–6 МБ), зависимостей нет:
+  `mipsel`, `mips`, `aarch64`, `armv7`, `x86_64`;
+- `teleproxy-keenetic_1.0_<arch>.ipk` — пакеты Entware для тех же архитектур;
 - `config.toml` — пример: fake-TLS на `cloudflare.com`, порт `8443`,
-  `user = "teleproxy"`, без SOCKS;
-- `S99teleproxy` — init-скрипт для Entware (start/stop/status/reload);
-- `README.md` — установка, сборка, совместная работа с Susanin 0.4.5.
+  `user = "teleproxy"`, один секрет-заглушка;
+- `init/S99teleproxy` — init-скрипт для Entware (start/stop/status/reload);
+- `install-keenetic.sh` — установщик пакета из релиза;
+- `README.md` — установка, сборка, ссылки, совместная работа с Susanin 0.4.5.
+
+## Архитектуры
+
+| arch | модели | файл |
+|---|---|---|
+| mipsel | Viva, Giga, Ultra (часть), Air | `teleproxy.mipsel` |
+| mips | старые Keenetic | `teleproxy.mips` |
+| aarch64 | Giga (KN-1011), Ultra (KN-1811), Hopper | `teleproxy.aarch64` |
+| armv7 | часть младших моделей | `teleproxy.armv7` |
+| x86_64 | Entware на ПК/VM | `teleproxy.x86_64` |
 
 ## Патчи к upstream
 
@@ -26,30 +39,76 @@
 
 Итого BSS 8,9 МБ вместо 120 МБ — без этого на 124 МБ роутера процесс падает на старте.
 
-## Установка
+## Установка (одной командой)
 
 ```sh
-# 1. пользователь (для матча по uid в Susanin 0.4.5)
-adduser -S -D -H -s /sbin/nologin teleproxy
+wget -qO- https://raw.githubusercontent.com/R17a/Teleproxy.Keenetic/main/install-keenetic.sh | sh
+```
 
-# 2. файлы
-mkdir -p /opt/etc/teleproxy
-# teleproxy.mipsel -> /opt/sbin/teleproxy
+Скрипт определяет архитектуру через `opkg print-architecture`, скачивает нужный
+`.ipk` из этого релиза и ставит его. Postinst создаёт пользователя `teleproxy`,
+каталоги и `/opt/etc/teleproxy/config.toml` (существующий конфиг не трогает).
+
+Дальше — вписать свои секреты в `/opt/etc/teleproxy/config.toml` и запустить:
+
+```sh
+/opt/etc/init.d/S99teleproxy start
+```
+
+## Установка пакетом вручную
+
+```sh
+cd /opt/tmp
+wget https://github.com/R17a/Teleproxy.Keenetic/releases/download/v1.0/teleproxy-keenetic_1.0_mipsel-3.4.ipk
+opkg install ./teleproxy-keenetic_1.0_mipsel-3.4.ipk
+```
+
+Свою архитектуру показывает `opkg print-architecture`:
+
+| opkg arch | файл |
+|---|---|
+| mipsel-3.4 | `teleproxy-keenetic_1.0_mipsel-3.4.ipk` |
+| mips-3.4 | `teleproxy-keenetic_1.0_mips-3.4.ipk` |
+| aarch64-3.10 | `teleproxy-keenetic_1.0_aarch64-3.10.ipk` |
+| armv7sf-k3.2 | `teleproxy-keenetic_1.0_armv7sf-k3.2.ipk` |
+| x86-64 | `teleproxy-keenetic_1.0_x86-64.ipk` |
+
+## Установка бинарником (без пакета)
+
+```sh
+adduser -S -D -H -s /sbin/nologin teleproxy
+mkdir -p /opt/etc/teleproxy /opt/var/log /opt/var/run
+# teleproxy.<arch> -> /opt/sbin/teleproxy
 # config.toml      -> /opt/etc/teleproxy/config.toml
 # S99teleproxy     -> /opt/etc/init.d/S99teleproxy
 chmod +x /opt/sbin/teleproxy /opt/etc/init.d/S99teleproxy
 chown root:teleproxy /opt/etc/teleproxy/config.toml
 chmod 640 /opt/etc/teleproxy/config.toml
-
-# 3. запуск
 /opt/etc/init.d/S99teleproxy start
 ```
 
-Выход в туннель настраивается в Susanin 0.4.5:
+## Секреты и ссылки
+
+Секреты — 32 hex-символа на пользователя, блоки `[[secret]]` в конфиге.
+Ссылка собирается как `ee` + ключ + `hex(domain)`:
+
+```sh
+sh tools/make-link.sh <32-hex-ключ> <EXTERNAL_IP> 8443 cloudflare.com
+# -> tg://proxy?server=<EXTERNAL_IP>&port=8443&secret=ee<ключ><hex(домена)>
+```
+
+Порт в ссылке — **внешний** (тот, что проброшен на роутер).
+
+## Выход в туннель (Susanin 0.4.5)
 
 ```ini
+# /opt/susanin/etc/susanin.conf
 proxy_uid=teleproxy
 proxy_egress=nwg0
+```
+
+```sh
+susanin restart && susanin check | grep proxy_egress
 ```
 
 ## Проверка
