@@ -63,6 +63,15 @@ jobs:
             /home/runner/tp-build/build-*.log
           if-no-files-found: warn
 
+      - name: Show build errors
+        if: always()
+        run: |
+          shopt -s nullglob
+          for f in /home/runner/tp-build/build-*.log; do
+            echo "===== $f ====="
+            grep -nE 'ОШИБКА|error:|Error [0-9]|No such file|cannot find|undefined reference' "$f" | tail -15 || true
+          done
+
       - name: Upload artifacts (any run)
         uses: actions/upload-artifact@v4
         with:

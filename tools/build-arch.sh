@@ -63,30 +63,38 @@ build_one() { # build_one <arch>
     echo "===== $ARCH start $(date -u) ====="
     echo "CC=$CC AR=$AR RANLIB=$RANLIB OUT=$OUT"
 
+    # Хвост лога в консоль CI, чтобы ошибку было видно без артефактов.
+    fail() { # fail <этап>
+        echo "ОШИБКА: $1 для $ARCH" >&2
+        tail -n 30 "$LOG" >&2
+        exec >&3
+        return 1
+    }
+
     # ---------- zlib ----------
     if [ ! -f "$OUT/lib/libz.a" ]; then
         cd "$B"
-        [ -f zlib.tgz ] || curl -fsSL -o zlib.tgz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
-        rm -rf "zlib-$ARCH" && mkdir "zlib-$ARCH" && tar xzf zlib.tgz -C "zlib-$ARCH" --strip-components=1
+        [ -f zlib.tgz ] || curl -fsSL -o zlib.tgz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz || { fail "скачивание zlib"; return 1; }
+        rm -rf "zlib-$ARCH" && mkdir "zlib-$ARCH" && tar xzf zlib.tgz -C "zlib-$ARCH" --strip-components=1 || { fail "распаковка zlib"; return 1; }
         cd "zlib-$ARCH"
-        CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="-O2 -fPIC" ./configure --static --prefix="$OUT"
-        make -j"$(nproc)"
-        make install
+        CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="-O2 -fPIC" ./configure --static --prefix="$OUT" || { fail "configure zlib"; return 1; }
+        make -j"$(nproc)" || { fail "make zlib"; return 1; }
+        make install || { fail "install zlib"; return 1; }
         echo "===== $ARCH zlib ok ====="
     fi
 
     # ---------- openssl ----------
     if [ ! -f "$OUT/lib/libcrypto.a" ]; then
         cd "$B"
-        [ -f openssl.tgz ] || curl -fsSL -o openssl.tgz https://www.openssl.org/source/openssl-3.0.15.tar.gz
-        rm -rf "openssl-$ARCH" && mkdir "openssl-$ARCH" && tar xzf openssl.tgz -C "openssl-$ARCH" --strip-components=1
+        [ -f openssl.tgz ] || curl -fsSL -o openssl.tgz https://www.openssl.org/source/openssl-3.0.15.tar.gz || { fail "скачивание openssl"; return 1; }
+        rm -rf "openssl-$ARCH" && mkdir "openssl-$ARCH" && tar xzf openssl.tgz -C "openssl-$ARCH" --strip-components=1 || { fail "распаковка openssl"; return 1; }
         cd "openssl-$ARCH"
         export CC AR RANLIB LDFLAGS="-latomic"
         # shellcheck disable=SC2086
         ./Configure $(pick_ossl_target "$ARCH") no-asm no-shared no-module no-tests \
-            --prefix="$OUT" --openssldir="$OUT/ssl" --libdir=lib >/dev/null
-        make -j"$(nproc)" build_libs
-        make install_dev
+            --prefix="$OUT" --openssldir="$OUT/ssl" --libdir=lib >/dev/null || { fail "Configure openssl"; return 1; }
+        make -j"$(nproc)" build_libs || { fail "make openssl"; return 1; }
+        make install_dev || { fail "install openssl"; return 1; }
         echo "===== $ARCH openssl ok ====="
     fi
 
@@ -110,11 +118,10 @@ build_one() { # build_one <arch>
               -DMAX_CONNECTIONS=$MAXCONN -DMAX_EVENTS=$MAXEVENTS -DEXT_CONN_TABLE_SIZE=$EXTCONN \
               -I$OUT/include" \
       LDFLAGS="-static -L$OUT/lib -lm -lrt -lcrypto -lz -lpthread -latomic" \
-      -j"$(nproc)"
+      -j"$(nproc)" || { fail "make teleproxy"; return 1; }
 
     if [ ! -f objs/bin/teleproxy ]; then
-        echo "===== $ARCH FAILED: бинарник не собран =====" >&2
-        exec >&3
+        fail "сборка teleproxy (бинарник не создан)"
         return 1
     fi
     cp -f objs/bin/teleproxy "$DIST/teleproxy.$ARCH"
