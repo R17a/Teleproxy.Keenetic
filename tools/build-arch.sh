@@ -72,6 +72,13 @@ build_one() { # build_one <arch>
     }
 
     # ---------- zlib ----------
+    # Проверяем, что у компилятора есть заголовки libc: без пакета
+    # libc6-dev-<arch>-cross сборка падает на bits/libc-header-start.h.
+    if ! printf 'int main(void){return 0;}\n' | "$CC" -x c - -o /dev/null >/dev/null 2>&1; then
+        fail "нет libc-dev для $ARCH (нужен libc6-dev-<arch>-cross)"
+        return 1
+    fi
+
     if [ ! -f "$OUT/lib/libz.a" ]; then
         cd "$B"
         [ -f zlib.tgz ] || curl -fsSL -o zlib.tgz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz || { fail "скачивание zlib"; return 1; }

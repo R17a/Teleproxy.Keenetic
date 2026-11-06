@@ -22,10 +22,14 @@ jobs:
       - name: Cross toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          # libc6-dev-*-cross обязательны: без них кросс-gcc не находит
+          # bits/libc-header-start.h (--no-install-recommends их не тянет).
+          sudo apt-get install -y \
             build-essential curl perl ca-certificates \
             gcc-mipsel-linux-gnu gcc-mips-linux-gnu \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf \
+            libc6-dev-mipsel-cross libc6-dev-mips-cross \
+            libc6-dev-arm64-cross libc6-dev-armhf-cross
 
       - name: Verify compilers
         run: |
@@ -33,7 +37,10 @@ jobs:
           for c in mipsel-linux-gnu-gcc mips-linux-gnu-gcc aarch64-linux-gnu-gcc arm-linux-gnueabihf-gcc gcc; do
             printf '%-30s ' "$c"
             command -v "$c" || { echo "MISSING"; exit 1; }
+            echo 'int main(void){return 0;}' | "$c" -x c - -o /dev/null \
+              || { echo "  нет libc-dev для $c"; exit 1; }
           done
+          echo "все компиляторы собирают тривиальный файл"
 
       - name: Build (all arches)
         run: |
