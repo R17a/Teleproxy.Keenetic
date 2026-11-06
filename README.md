@@ -92,19 +92,45 @@ file dist/teleproxy.mipsel
 
 ## Установка на роутер
 
-Быстрее всего — пакетом из релиза (создаёт пользователя `teleproxy`, каталоги и
-конфиг-пример, существующий конфиг не трогает):
+Быстрее всего — пакетом из релиза (сам определит архитектуру, создаст
+пользователя `teleproxy`, каталоги и конфиг-пример; существующий конфиг не трогает):
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/R17a/Teleproxy.Keenetic/main/install-keenetic.sh | sh
 ```
 
-Или вручную из `dist/`:
+Пакетом вручную — сначала архитектура:
+
+```sh
+opkg print-architecture | awk '{print $2}'
+```
+
+| что выведет opkg | пакет |
+|---|---|
+| `mipsel-3.4` | `teleproxy-keenetic_1.0_mipsel-3.4.ipk` |
+| `mips-3.4` | `teleproxy-keenetic_1.0_mips-3.4.ipk` |
+| `aarch64-3.10` | `teleproxy-keenetic_1.0_aarch64-3.10.ipk` |
+| `armv7sf-k3.2` | `teleproxy-keenetic_1.0_armv7sf-k3.2.ipk` |
+| `x86-64` | `teleproxy-keenetic_1.0_x86-64.ipk` |
+
+Автоматически (подставит нужный файл):
+
+```sh
+VER=1.0
+ARCH=$(opkg print-architecture | awk '{print $2}' \
+       | grep -E '^(mipsel|mips|aarch64|armv7|x86-64)' | head -1)
+PKG="teleproxy-keenetic_${VER}_${ARCH}.ipk"
+cd /opt/tmp
+wget "https://github.com/R17a/Teleproxy.Keenetic/releases/download/v${VER}/${PKG}"
+opkg install "./${PKG}"
+```
+
+Или бинарником, без пакета:
 
 | Файл | Куда | Права |
 |---|---|---|
 | `teleproxy.<arch>` | `/opt/sbin/teleproxy` | `chmod +x` |
-| `config.toml` | `/opt/etc/teleproxy/config.toml` | `chown root:teleproxy`, `chmod 640` |
+| `packaging/config.toml.example` | `/opt/etc/teleproxy/config.toml` | `chown root:teleproxy`, `chmod 640` |
 | `init/S99teleproxy` | `/opt/etc/init.d/S99teleproxy` | `chmod +x` |
 
 ```sh
