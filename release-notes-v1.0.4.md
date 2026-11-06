@@ -50,6 +50,6 @@ teleproxy-fw: порт 8443 проброшен (wan=ppp0)
 susanin check | grep proxy_egress           # mark_rules=1 ip_rule=1 default_route=1
 iptables -t mangle -S OUTPUT | grep uid-owner
 iptables -t nat -S PREROUTING | grep 8443
-ip route get 149.154.167.51 uid 1001        # dev nwg0
+ip route show table 110                      # default dev nwg0
 /opt/etc/init.d/S99teleproxy status
 ```

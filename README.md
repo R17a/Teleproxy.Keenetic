@@ -238,7 +238,7 @@ https://t.me/proxy?server=<EXTERNAL_IP>&port=8443&secret=ee72995647c48776f584339
    ```
 5. Проверка маршрута процесса:
    ```sh
-   ip route get 149.154.167.51 uid $(id -u teleproxy)
+   ip route show table 110
    ```
    Должно быть `dev nwg0`.
 
