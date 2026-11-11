@@ -43,3 +43,6 @@ observatory/
 # Branding assets (not tracked)
 branding/
 dist/
+
+# Локальные конфиги деплоя (содержат secret-ключи, в репозиторий нельзя)
+deploy/*/config.toml

@@ -46,6 +46,8 @@
 #include "common/rpc-const.h"
 #include "common/sha256.h"
 #include "net/net-connections.h"
+#include "net/net-msg-buffers.h"
+#include "jobs/jobs.h"
 #include "net/net-crypto-aes.h"
 #include "net/net-events.h"
 #include "net/net-tcp-connections.h"
@@ -256,6 +258,43 @@ conn_type_t ct_direct_dc = {
   .crypto_needed_output_bytes = cpu_tcp_aes_crypto_ctr128_needed_output_bytes,
 };
 
+/* Backpressure: притормаживаем чтение только когда пул буферов выбран
+   ПОЛНОСТЬЮ. Раньше порог был «осталось меньше одного чанка», и на 10 МБ это
+   срабатывало уже на 4/5 — прокси почти всё время стоял в паузах, сервер
+   упирался в rwnd (наблюдалось: bw 4,7 Мбит/с, delivery_rate 98 кбит/с,
+   rwnd_limited 39.8%), и видео «не грузилось», хотя пул ещё был не полон.
+
+   Пауза через C_STOPREAD + таймер: ровно тот же механизм, что использует
+   rate_limit_after_relay (его снимает rate_limit_resume из alarm-хендлера
+   и ct_direct_client, и ct_direct_dc). */
+#define RELAY_BP_PAUSE 0.02
+long long relay_backpressure_events;
+
+static void relay_backpressure (connection_job_t C) {
+  struct buffers_stat bufs;
+  fetch_buffers_stat (&bufs);
+  if (bufs.max_buffer_chunks <= 0) {
+    return;
+  }
+  /* Пауза нужна только когда свободных чанков не осталось: запрос на новый
+     всё равно не удовлетворится, а до этого пусть работает на полную. */
+  if (bufs.allocated_buffer_chunks < bufs.max_buffer_chunks) {
+    return;
+  }
+  struct connection_info *c = CONN_INFO (C);
+  if (c->flags & C_STOPREAD) {
+    return;
+  }
+  __sync_fetch_and_or (&c->flags, C_STOPREAD);
+  if (c->io_conn) {
+    __sync_fetch_and_or (&SOCKET_CONN_INFO (c->io_conn)->flags, C_STOPREAD);
+  }
+  job_timer_insert (C, precise_now + RELAY_BP_PAUSE);
+  ++relay_backpressure_events;
+  vkprintf (2, "relay backpressure: pause %d bytes relay, chunks %d/%d\n",
+            c->in.total_bytes, bufs.allocated_buffer_chunks, bufs.max_buffer_chunks);
+}
+
 /* Relay bytes from one end to the other (client→DC or DC→client).
    Identical to tcp_proxy_pass_parse_execute but the paired connection
    has crypto enabled, so the engine will encrypt before flushing. */
@@ -275,6 +314,8 @@ static int tcp_direct_relay (connection_job_t C) {
   vkprintf (3, "direct relay %d bytes to %s:%d\n", r->total_bytes, show_remote_ip (E), e->remote_port);
   mpq_push_w (e->out_queue, PTR_MOVE(r), 0);
   job_signal (JOB_REF_PASS (E), JS_RUN);
+
+  relay_backpressure (C);
   return 0;
 }
 

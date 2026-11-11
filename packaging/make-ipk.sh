@@ -62,7 +62,27 @@ build_one() { # build_one <arch> <binary>
     chmod 755 "$_d/opt/sbin/teleproxy"
     cp "$SRC/init/S99teleproxy" "$_d/opt/etc/init.d/S99teleproxy"
     cp "$SRC/init/S98teleproxy-fw" "$_d/opt/etc/init.d/S98teleproxy-fw"
-    chmod 755 "$_d/opt/etc/init.d/S99teleproxy" "$_d/opt/etc/init.d/S98teleproxy-fw"
+    cp "$SRC/init/S96net-tune" "$_d/opt/etc/init.d/S96net-tune"
+    chmod 755 "$_d/opt/etc/init.d/S99teleproxy" "$_d/opt/etc/init.d/S98teleproxy-fw" \
+              "$_d/opt/etc/init.d/S96net-tune"
+
+    # SSH-туннель кладём НЕисполняемым: он нужен только тем, кто выбрал схему
+    # «SSH-SOCKS» и положил ключ в /opt/etc/ssh. Иначе rc.unslung на каждой
+    # загрузке пытался бы поднять туннель без ключа и писал ошибку в лог.
+    # Включение: chmod +x /opt/etc/init.d/S97ssh-tunnel && sh ... start
+    cp "$SRC/init/S97ssh-tunnel" "$_d/opt/etc/init.d/S97ssh-tunnel"
+    chmod 644 "$_d/opt/etc/init.d/S97ssh-tunnel"
+
+    # Диагностика и обслуживание — в /opt/sbin, потому что именно оттуда их
+    # вызывают init-скрипты (S95xray-guard: /opt/sbin/tp-health.sh,
+    # /opt/sbin/tp-flash-check.sh). Раньше их приходилось копировать руками,
+    # и на чистой установке сторож молча ничего не снимал.
+    for _t in tp-health.sh tp-health-report.sh tp-postmortem.sh tp-flash-check.sh \
+              tp-mon.sh tp-health-cron.sh xray-tproxy-ssh.sh susanin-routecheck.sh; do
+        cp "$SRC/tools/$_t" "$_d/opt/sbin/$_t"
+    done
+    chmod 755 "$_d/opt/sbin/"*.sh
+
     cp "$SRC/packaging/config.toml.example" "$_d/opt/share/teleproxy/config.toml.example"
     chmod 644 "$_d/opt/share/teleproxy/config.toml.example"
 

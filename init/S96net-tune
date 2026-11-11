@@ -1,0 +1,57 @@
+#!/bin/sh
+# S96net-tune — сетевые настройки роутера под PPPoE + tproxy.
+#
+# Зачем: на PPPoE MTU 1492, а туннель гонит крупные сегменты. Если MSS не
+# подрезан, часть пакетов теряется по дороге, TCP переотправляет, и медиа
+# (видео, кружки) «думает» на ровном месте. Мы это видели по всплескам
+# RetransSegs при активности и нулевым ошибкам на интерфейсах.
+#
+# Что делает:
+#   * net.ipv4.tcp_mtu_probing=1 — ядро само подбирает MSS при чёрной дыре;
+#   * TCPMSS --clamp-mss-to-pmtu в OUTPUT (трафик самого роутера, Xray) и
+#     FORWARD (клиенты за роутером).
+#
+# Идемпотентно: повторный start не дублирует правила. iptables и sysctl не
+# переживают перезагрузку, поэтому это отдельный init-скрипт.
+
+say() { echo "[net-tune] $*"; }
+
+apply() {
+    sysctl -qw net.ipv4.tcp_mtu_probing=1 2>/dev/null || true
+
+    for ch in OUTPUT FORWARD; do
+        # Если в цепочке уже есть любое правило TCPMSS (например, от Susanin
+        # по -i/-o ppp0), своё не добавляем: функция уже покрыта.
+        if iptables -w -t mangle -S "$ch" 2>/dev/null | grep -q 'TCPMSS'; then
+            continue
+        fi
+        iptables -w -t mangle -C "$ch" -p tcp --tcp-flags SYN,RST SYN \
+            -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null && continue
+        iptables -w -t mangle -A "$ch" -p tcp --tcp-flags SYN,RST SYN \
+            -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
+            say "не удалось добавить правило в $ch (нет xt_TCPMSS?)"
+    done
+
+    say "применено: mtu_probing=$(sysctl -n net.ipv4.tcp_mtu_probing 2>/dev/null), clamp в OUTPUT/FORWARD"
+}
+
+remove() {
+    for ch in OUTPUT FORWARD; do
+        while iptables -w -t mangle -D "$ch" -p tcp --tcp-flags SYN,RST SYN \
+                -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; do :; done
+    done
+    say "правила клампа сняты"
+}
+
+case "${1:-start}" in
+    start|restart) apply ;;
+    stop) remove ;;
+    status)
+        echo "mtu_probing: $(sysctl -n net.ipv4.tcp_mtu_probing 2>/dev/null)"
+        iptables -w -t mangle -S OUTPUT 2>/dev/null | grep -c TCPMSS | \
+            awk '{print "правил TCPMSS в OUTPUT: " $1}'
+        iptables -w -t mangle -S FORWARD 2>/dev/null | grep -c TCPMSS | \
+            awk '{print "правил TCPMSS в FORWARD: " $1}'
+        ;;
+    *) echo "usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+esac

@@ -1,0 +1,192 @@
+#!/bin/sh
+# S97proxy-watch — сторожевой цикл для Teleproxy + Xray на Keenetic (Entware).
+#
+# Зачем: после ночного обрыва WAN/перезагрузки Xray остаётся в полудохлом
+# состоянии (старые соединения, протухший маршрут), teleproxy висит без
+# трафика, а правило проброса может отсутствовать. Полная перезагрузка
+# роутера лечит это, но её нельзя делать каждую ночь.
+#
+# Что делает:
+#   * ждёт поднятия WAN при старте;
+#   * ловит и смену IP/маршрута, и сам факт «WAN пропал → вернулся»
+#     (даже если IP не изменился) — перезапускает Xray + teleproxy + проброс;
+#   * раз в INTERVAL секунд проверяет, что 8443 слушается;
+#   * раз в PROBE_EVERY секунд делает лёгкий HEAD-запрос через SOCKS
+#     127.0.0.1:1080, чтобы убедиться, что туннель жив;
+#   * после 3 неудачных проб подряд перезапускает Xray + teleproxy;
+#   * пишет всё в /opt/var/log/proxy-watch.log (только события, с ротацией).
+#
+# Нагрузка: проверки маршрута/порта — несколько миллисекунд раз в 30 с;
+# проба через туннель — один HEAD раз в 2 минуты (единицы КБ). Лог растёт
+# только на событиях, ротация на 256 КБ.
+#
+# Установка:
+#   cp S97proxy-watch /opt/etc/init.d/S97proxy-watch
+#   chmod +x /opt/etc/init.d/S97proxy-watch
+#   /opt/etc/init.d/S97proxy-watch start
+#
+# Управление: start | stop | status | run
+set -u
+
+PIDFILE=/opt/var/run/proxy-watch.pid
+LOG=/opt/var/log/proxy-watch.log
+INTERVAL=${INTERVAL:-30}
+PROBE_EVERY=${PROBE_EVERY:-120}
+BOOT_GRACE=${BOOT_GRACE:-90}
+COOLDOWN=${COOLDOWN:-120}
+XRAY_RESTART=/opt/susanin/tools/xray-egress.sh
+S99=/opt/etc/init.d/S99teleproxy
+S98=/opt/etc/init.d/S98teleproxy-fw
+
+log() {
+    # Ротация: лог пишется только по событиям, но подстрахуемся.
+    if [ -f "$LOG" ] && [ "$(wc -c <"$LOG" 2>/dev/null || echo 0)" -gt 262144 ]; then
+        mv -f "$LOG" "$LOG.old" 2>/dev/null
+    fi
+    echo "[$(date '+%F %T')] $*" >>"$LOG"
+}
+
+wan_if() { ip route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1; }
+wan_ip() { ip route get 8.8.8.8 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p'; }
+
+listen_ok() { netstat -ltn 2>/dev/null | grep -q ':8443 '; }
+
+socks_ok() {
+    command -v curl >/dev/null 2>&1 || return 0
+    # HEAD: только проверка, что туннель до Telegram жив, без скачивания тела.
+    curl -x socks5h://127.0.0.1:1080 -m 8 -s -I -o /dev/null https://core.telegram.org 2>/dev/null
+}
+
+restart_path() { # restart_path <причина>
+    log "restart xray + teleproxy ($1)"
+    command -v conntrack >/dev/null 2>&1 && conntrack -F >/dev/null 2>&1
+    [ -x "$XRAY_RESTART" ] && "$XRAY_RESTART" restart >>"$LOG" 2>&1
+    sleep 5
+    "$S99" restart >>"$LOG" 2>&1
+    "$S98" start >>"$LOG" 2>&1
+}
+
+run() {
+    mkdir -p /opt/var/log /opt/var/run 2>/dev/null
+    log "watcher started (interval=${INTERVAL}s probe=${PROBE_EVERY}s)"
+
+    # Ждём WAN до 5 минут, чтобы не считать старт после ребута «обрывом».
+    i=0
+    while [ "$i" -lt 60 ]; do
+        [ -n "$(wan_if)" ] && [ -n "$(wan_ip)" ] && break
+        i=$((i + 1))
+        sleep 5
+    done
+    LAST_IF=$(wan_if)
+    LAST_IP=$(wan_ip)
+    log "baseline: if=${LAST_IF:-none} ip=${LAST_IP:-none}"
+
+    start_ts=$(date +%s)
+    last_probe=0
+    was_down=0
+    fails=0
+    last_restart=0
+
+    while :; do
+        sleep "$INTERVAL"
+        now=$(date +%s)
+        if [ $((now - start_ts)) -lt "$BOOT_GRACE" ]; then continue; fi
+
+        ifc=$(wan_if)
+        ip=$(wan_ip)
+
+        # WAN пропал (нет default-маршрута/IP) — запоминаем и ждём.
+        if [ -z "$ifc" ] || [ -z "$ip" ]; then
+            if [ "$was_down" -eq 0 ]; then log "WAN down"; fi
+            was_down=1
+            fails=0
+            continue
+        fi
+
+        # WAN вернулся после обрыва — даже если IP тот же, туннель чистим.
+        if [ "$was_down" -eq 1 ]; then
+            was_down=0
+            LAST_IF=$ifc
+            LAST_IP=$ip
+            log "WAN restored: $ifc/$ip"
+            if [ $((now - last_restart)) -ge "$COOLDOWN" ]; then
+                last_restart=$now
+                restart_path "WAN restored"
+            fi
+            fails=0
+            continue
+        fi
+
+        # Смена маршрута/IP на ходу.
+        if [ "$ifc" != "$LAST_IF" ] || [ "$ip" != "$LAST_IP" ]; then
+            log "WAN changed: ${LAST_IF:-none}/${LAST_IP:-none} -> $ifc/$ip"
+            LAST_IF=$ifc
+            LAST_IP=$ip
+            if [ $((now - last_restart)) -ge "$COOLDOWN" ]; then
+                last_restart=$now
+                restart_path "WAN changed"
+            fi
+            fails=0
+            continue
+        fi
+
+        if ! listen_ok; then
+            log "8443 is not listening — start teleproxy"
+            "$S99" start >>"$LOG" 2>&1
+            "$S98" start >>"$LOG" 2>&1
+        fi
+
+        # Тяжёлую пробу через туннель делаем редко — раз в PROBE_EVERY.
+        if [ $((now - last_probe)) -ge "$PROBE_EVERY" ]; then
+            last_probe=$now
+            if socks_ok; then
+                fails=0
+            else
+                fails=$((fails + 1))
+                log "SOCKS probe failed ($fails/3)"
+                if [ "$fails" -ge 3 ]; then
+                    if [ $((now - last_restart)) -ge "$COOLDOWN" ]; then
+                        last_restart=$now
+                        restart_path "3 probe failures"
+                    else
+                        log "cooldown active, skip restart"
+                    fi
+                    fails=0
+                fi
+            fi
+        fi
+    done
+}
+
+case "${1:-start}" in
+    start)
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "already running pid $(cat "$PIDFILE")"
+            exit 0
+        fi
+        mkdir -p /opt/var/log /opt/var/run
+        nohup "$0" run >>"$LOG" 2>&1 &
+        echo $! >"$PIDFILE"
+        echo "started pid $(cat "$PIDFILE")"
+        ;;
+    stop)
+        [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+        rm -f "$PIDFILE"
+        echo stopped
+        ;;
+    status)
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "RUNNING pid $(cat "$PIDFILE")"
+        else
+            echo STOPPED
+        fi
+        tail -5 "$LOG" 2>/dev/null
+        ;;
+    run)
+        run
+        ;;
+    *)
+        echo "usage: $0 {start|stop|status}" >&2
+        exit 1
+        ;;
+esac

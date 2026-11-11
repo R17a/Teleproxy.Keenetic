@@ -70,6 +70,43 @@ chown root:"${PROXY_ID}" /opt/etc/teleproxy/config.toml 2>/dev/null || true
 chmod 640 /opt/etc/teleproxy/config.toml
 echo "[teleproxy] config.toml: user = \"${PROXY_ID}\""
 
+# --- 2b. оптимальные параметры «из коробки» ----------------------------------
+# Значения подобраны на Keenetic Viva (124 МБ): 4 МБ пула буферов исчерпывались,
+# 16 МБ давали kswapd/OOM, mss_clamp на PPPoE мешал. init-скрипт S99teleproxy
+# задаёт --msg-buffers-size 10485760 (5 чанков по 2 МБ), --connections 128,
+# --max-special-connections 32; здесь дописываем то, что живёт в config.toml,
+# чтобы после установки ничего не приходилось править руками.
+CFG=/opt/etc/teleproxy/config.toml
+
+# top-level ключ обязан стоять ДО первого [[secret]]: после заголовка таблицы
+# TOML относит его к этой таблице, и парсер его не видит.
+toml_insert_before_secret() { # $1 = готов строкой "key = value"
+    awk -v line="$1" '!done && /^\[\[secret\]\]/ { print line; print ""; done = 1 } { print }' \
+        "$CFG" > "$CFG.new" && mv -f "$CFG.new" "$CFG"
+}
+
+ensure_toml() { # $1 = ключ, $2 = значение как есть (false / 32)
+    if grep -q "^[[:space:]]*$1[[:space:]]*=" "$CFG" 2>/dev/null; then
+        return 0
+    fi
+    toml_insert_before_secret "$1 = $2"
+    # [[secret]] ещё нет — вставлять некуда, пишем в конец
+    grep -q "^[[:space:]]*$1[[:space:]]*=" "$CFG" 2>/dev/null || \
+        printf '\n%s = %s\n' "$1" "$2" >> "$CFG"
+    echo "[teleproxy] config.toml: добавлено $1 = $2"
+}
+
+# Секрета в свежем конфиге может не быть вовсе (пример без [[secret]]):
+# тогда шапка не нужна, ensure_toml просто допишет ключи в конец.
+ensure_toml mss_clamp false
+ensure_toml max_connections 32
+
+# Старое значение могло остаться от прежних версий (было 256/512): общий лимит
+# всё равно берётся из --connections, но пусть TOML не вводит в заблуждение.
+if grep -q '^[[:space:]]*max_connections[[:space:]]*=[[:space:]]*[0-9]' "$CFG" 2>/dev/null; then
+    sed -i 's|^[[:space:]]*max_connections[[:space:]]*=.*|max_connections = 32|' "$CFG"
+fi
+
 # --- 3. P5 в Susanin ---------------------------------------------------------
 SC=/opt/susanin/etc/susanin.conf
 if [ -f "$SC" ]; then
@@ -97,8 +134,8 @@ else
 fi
 
 # --- выбор апстрима: Xray SOCKS (Reality) или P5 через WireGuard --------------
-# Если в Xray поднят локальный SOCKS (tools/xray-socks.sh enable), гоняем MTProto
-# по Reality: это единственный канал, который не душат. P5 в этом случае не нужен.
+# Если Xray слушает локальный SOCKS 127.0.0.1:1080, гоняем MTProto по Reality:
+# это единственный канал, который не душат. P5 в этом случае не нужен.
 if netstat -ltn 2>/dev/null | grep -q '127\.0\.0\.1:1080'; then
     if ! grep -q '^socks5[[:space:]]*=' /opt/etc/teleproxy/config.toml 2>/dev/null; then
         # ВАЖНО: ключ обязан быть ДО первого [[secret]] — после заголовка таблицы

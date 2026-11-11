@@ -1,26 +1,36 @@
 # Teleproxy на Keenetic (mipsel/aarch64/...).
 # Слушаем 8443: 443 на роутере обычно занят ocserv/nginx (OC+ и веб-конфигуратор).
-# Исходящие к Telegram DC идут напрямую, маршрут в туннель задаёт Susanin 0.4.5
-# по uid процесса (proxy_uid / proxy_egress) — см. README.md.
-# SOCKS5 не используется: остаётся одна крипто-схема (MTProto + WireGuard в ядре).
+# Выход в интернет — один из двух (README.md, раздел «Выход в интернет»):
+#   A) маршрут в туннель nwg («Другое подключение») задаёт Susanin.Keenetic
+#      0.4.5+ по uid процесса: user = "teleproxy" + proxy_uid/proxy_egress;
+#   B) socks5 = "socks5://127.0.0.1:1080" — через Xray из того же
+#      Susanin.Keenetic, тогда user/proxy_uid/proxy_egress не нужны.
 
 port = 8443
 stats_port = 8899
 http_stats = true
 direct = true
-# Работаем под отдельным пользователем: по нему Susanin матчит трафик.
+# Работаем под отдельным пользователем: по нему Susanin.Keenetic матчит трафик.
 # Пользователя создаёт postinst пакета (или вручную: adduser -S -D -H teleproxy).
 user = "teleproxy"
 workers = 0
-# потолок соединений (таблица в сборке на 2048; для дома хватает 512)
-max_connections = 256
+# Потолок «special» (секретных) соединений. Общий лимит, число special и пул
+# буферов на Keenetic задаёт init-скрипт, он перекрывает TOML:
+#   S99teleproxy: --connections 128 --max-special-connections 32
+#                 --msg-buffers-size 10485760   (5 чанков по 2 МБ)
+# 4 МБ исчерпывались под нагрузкой, 8 МБ упирались под видео, 16 МБ давали
+# kswapd/OOM; 10 МБ — рабочее значение.
+max_connections = 32
+# Автоматическая фрагментация ClientHello (низкий MSS). На PPPoE Keenetic с ней
+# хуже — проверено, поэтому по умолчанию выключаем (postinst тоже это делает).
+mss_clamp = false
 domain = "cloudflare.com"
 
-# Апстрим через локальный SOCKS Xray (Reality). Включает postinst,
-# если поднят tools/xray-socks.sh enable. Без него — direct.
+# Апстрим через SOCKS Xray (Reality) из Susanin.Keenetic: раскомментируйте,
+# если Xray слушает 127.0.0.1:1080 — postinst включает это сам при установке.
 # socks5 = "socks5://127.0.0.1:1080"
 
 # Секрет: 32 hex-символа (16 байт). Добавьте свои блоки [[secret]] по образцу.
 [[secret]]
-key = "72995647c48776f584339f198f0ad2b7"
+key = "0123456789abcdef0123456789abcdef"
 label = "default"

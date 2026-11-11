@@ -9,11 +9,17 @@ LOG=/opt/var/log/teleproxy.log
 CFG=/opt/etc/teleproxy/config.toml
 BIN=/opt/sbin/teleproxy
 
-# Лимиты под 124 МБ RAM (рядом живут Xray и NDM):
-#   --msg-buffers-size 4M   (было 16M — давило на память, kswapd/OOM)
-#   --connections 256       (дефолт из сборки 2048)
-#   --max-special-connections 64
-EXTRA="--msg-buffers-size 4194304 --connections 256 --max-special-connections 64"
+# Лимиты под 124 МБ RAM (рядом живут Xray и NDM). Чанк буферов — 2 МБ
+# (MSG_BUFFERS_CHUNK_SIZE = 2 097 088), поэтому 10 МБ = 5 чанков:
+#   --msg-buffers-size 10M  (4M/2 чанка исчерпывались под нагрузкой —
+#                            "cannot allocate tcp receive buffer (got 1 of 128)";
+#                            8M/4 чанка ещё упирались в потолок под видео;
+#                            16M/8 чанков давили на память, kswapd/OOM.
+#                            На 10 МБ Viva держит запас, available ~20 МБ)
+#   --connections 96       (дефолт из сборки 2048; 256 при 4M пуле рвал соединения)
+#   --max-special-connections 48  (клиентские подключения к 8443; в тесте два
+#                            телефона давали 28 из 32 — подняли с запасом)
+EXTRA="--msg-buffers-size 8388608 --connections 96 --max-special-connections 48"
 
 running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
     # Ждём DNS перед стартом: если прокси поднимется, пока сеть/DNS ещё не готовы,

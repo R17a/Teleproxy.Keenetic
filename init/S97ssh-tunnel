@@ -1,0 +1,112 @@
+#!/bin/sh
+# S97ssh-tunnel — SSH SOCKS-туннель до VDS для Teleproxy.
+#
+# Зачем: Xray на MT7621 упирается в ~12 Мбит/с (шифрование в userspace),
+# а SSH даёт почти скорость прямого канала (замер 2026-11-09: 3,5 МБ/с
+# против 1,5 МБ/с у Xray). Teleproxy ходит в socks5://127.0.0.1:1081,
+# autossh держит туннель и переподнимает его при обрыве.
+#
+#   S97ssh-tunnel start|stop|restart|status
+#
+# Конечный хост (VDS) в скрипте НЕ зашит: адрес конкретного сервера в поставку не
+# попадает. Укажите его в конфиге /opt/etc/teleproxy/ssh-tunnel.conf:
+#
+#   SSH_HOST=vds.example.com     # обязательный: адрес или IP вашего VDS
+#   SSH_KEY=/opt/etc/ssh/vds3    # необязательный, путь к ключу
+#   SSH_PORT=1081                # необязательный, локальный SOCKS-порт
+#
+# То же можно задать переменными окружения (SSH_HOST/SSH_KEY/SSH_PORT) — они
+# имеют приоритет над файлом. Без SSH_HOST туннель не поднимается, причина
+# пишется в лог.
+#
+# Лог: /opt/var/log/ssh-tunnel.log
+
+CONF=${SSH_TUNNEL_CONF:-/opt/etc/teleproxy/ssh-tunnel.conf}
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && . "$CONF"
+
+KEY=${SSH_KEY:-/opt/etc/ssh/vds3}
+HOST=${SSH_HOST:-}
+PORT=${SSH_PORT:-1081}
+PIDFILE=/opt/var/run/ssh-tunnel.pid
+LOG=/opt/var/log/ssh-tunnel.log
+
+say() { echo "[ssh-tunnel] $*"; }
+
+running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+
+socks_up() { netstat -ltn 2>/dev/null | grep -q "127\.0\.0\.1:$PORT"; }
+
+start() {
+    mkdir -p /opt/var/log /opt/var/run 2>/dev/null || true
+    if [ -z "$HOST" ]; then
+        say "не задан SSH_HOST — укажите конечный хост VDS в $CONF"
+        say "  пример: SSH_HOST=vds.example.com"
+        return 1
+    fi
+    if [ ! -f "$KEY" ]; then
+        say "нет ключа $KEY"
+        return 1
+    fi
+    if socks_up; then
+        say "уже слушает 127.0.0.1:$PORT"
+        return 0
+    fi
+    AUTOSSH_PATH=/opt/bin/ssh nohup autossh -M 0 -N -D "127.0.0.1:$PORT" -i "$KEY" \
+        -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+        -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new \
+        "root@$HOST" >>"$LOG" 2>&1 &
+    echo $! > "$PIDFILE"
+    # autossh поднимает ssh не мгновенно: ждём до 15 с, иначе на медленном
+    # старте скрипт ругался «не поднялся», хотя туннель появлялся через 1–2 с.
+    _i=0
+    while [ "$_i" -lt 15 ]; do
+        socks_up && break
+        _i=$((_i + 1))
+        sleep 1
+    done
+    if socks_up; then
+        say "туннель поднят: socks5 на 127.0.0.1:$PORT (pid $(cat "$PIDFILE"))"
+    else
+        say "ВНИМАНИЕ: туннель не поднялся за 15 с, смотрите $LOG"
+        return 1
+    fi
+}
+
+stop() {
+    if [ -f "$PIDFILE" ]; then
+        _p=$(cat "$PIDFILE" 2>/dev/null)
+        [ -n "$_p" ] && kill "$_p" 2>/dev/null
+    fi
+    for p in $(pidof autossh 2>/dev/null); do kill "$p" 2>/dev/null; done
+    for p in $(pidof ssh 2>/dev/null); do
+        tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -- '-D 127.0.0.1:' && kill "$p" 2>/dev/null
+    done
+    rm -f "$PIDFILE"
+    say "остановлен"
+}
+
+case "${1:-start}" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 1; start ;;
+    status)
+        [ -z "$HOST" ] && echo "не задан SSH_HOST — см. $CONF"
+        if socks_up; then
+            echo "туннель: LISTEN 127.0.0.1:$PORT"
+        else
+            echo "туннель: НЕ слушает"
+        fi
+        if [ -f "$PIDFILE" ]; then
+            _p=$(cat "$PIDFILE" 2>/dev/null)
+            if [ -n "$_p" ] && kill -0 "$_p" 2>/dev/null; then
+                echo "autossh: RUNNING pid $_p"
+            else
+                echo "autossh: STOPPED (pidfile $_p)"
+            fi
+        else
+            echo "autossh: нет pidfile"
+        fi
+        ;;
+    *) echo "usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+esac

@@ -205,6 +205,11 @@ struct ext_connection {
   long long out_conn_id;
   long long auth_key_id;
   struct ext_connection *lru_prev, *lru_next;
+  // Для эвикции по активности: сколько байт занимал в прошлую проверку и когда
+  // эта цифра последний раз менялась. Соединение, которое держит буферы, но
+  // ничего не передаёт, выкидываем первым — даже если оно не самое старое.
+  double last_active;
+  long long last_bytes;
 };
 
 struct ext_connection_ref {
@@ -361,6 +366,8 @@ struct ext_connection *create_ext_connection (connection_job_t CI, long long in_
     Ex->out_gen = CONN_INFO(CO)->generation;
   }
   Ex->auth_key_id = auth_key_id;
+  Ex->last_active = precise_now;
+  Ex->last_bytes = -1;
   return Ex;
 }
 
@@ -1000,23 +1007,69 @@ void lru_insert_conn (connection_job_t c) {
   }
 }
 
+// Раз в секунду (из cron, в engine-контексте) отмечаем, у кого менялся объём
+// занятых буферов. Это и есть признак жизни: если соединение молчит, его
+// буферы не меняются. Раньше LRU-порядок обновлялся только при создании
+// соединения, поэтому эвикция убивала самые старые — то есть долгоживущие
+// DC-соединения, через которые как раз идёт видео.
+void update_conn_activity (void) {
+  struct ext_connection *Ext;
+  for (Ext = ConnLRU.lru_next; Ext != &ConnLRU; Ext = Ext->lru_next) {
+    connection_job_t d = connection_get_by_fd_generation (Ext->in_fd, Ext->in_gen);
+    if (!d) {
+      continue;
+    }
+    long long used = CONN_INFO(d)->in.total_bytes + CONN_INFO(d)->in_u.total_bytes +
+                     CONN_INFO(d)->out.total_bytes + CONN_INFO(d)->out_p.total_bytes;
+    if (used != Ext->last_bytes) {
+      Ext->last_bytes = used;
+      Ext->last_active = precise_now;
+    }
+    job_decref (JOB_REF_PASS (d));
+  }
+}
+
+// Признак настоящего исчерпания пула — не «сколько байт занято», а «все чанки
+// уже выделены»: аллокатор отдаёт память кусками по 2 МБ, и когда allocated
+// достигает max_buffer_chunks, новый запрос падает с "cannot allocate tcp
+// receive buffer" — даже если внутри чанков ещё есть свободные буферы
+// (фрагментация по классам размера). Поэтому смотрим на чанки, а байтовый
+// порог 3/4 оставляем как второй, более мягкий критерий.
 void check_all_conn_buffers (void) {
   struct buffers_stat bufs;
   fetch_buffers_stat (&bufs);
   long long max_buffer_memory = bufs.max_buffer_chunks * (long long) MSG_BUFFERS_CHUNK_SIZE;
+  int pool_full = (bufs.allocated_buffer_chunks >= bufs.max_buffer_chunks);
   long long to_free = bufs.total_used_buffers_size - max_buffer_memory * 3/4;
-  while (to_free > 0 && ConnLRU.lru_next != &ConnLRU) {
-    struct ext_connection *Ext = ConnLRU.lru_next;
-    vkprintf (2, "check_all_conn_buffers(): closing connection %d because of %lld total used buffer vytes (%lld max, %lld bytes to free)\n", Ext->in_fd, bufs.total_used_buffers_size, max_buffer_memory, to_free);
-    connection_job_t d = connection_get_by_fd_generation (Ext->in_fd, Ext->in_gen);
+
+  if (!pool_full && to_free <= 0) {
+    return;
+  }
+
+  while ((to_free > 0 || pool_full) && ConnLRU.lru_next != &ConnLRU) {
+    // Жертва — самая давно молчащая, а не самая старая по созданию.
+    struct ext_connection *victim = ConnLRU.lru_next, *Ext;
+    for (Ext = ConnLRU.lru_next; Ext != &ConnLRU; Ext = Ext->lru_next) {
+      if (Ext->last_active < victim->last_active) {
+        victim = Ext;
+      }
+    }
+    vkprintf (2, "check_all_conn_buffers(): closing connection %d (idle %.1fs), chunks %d/%d, %lld bytes to free\n", victim->in_fd, precise_now - victim->last_active, bufs.allocated_buffer_chunks, bufs.max_buffer_chunks, to_free);
+    connection_job_t d = connection_get_by_fd_generation (victim->in_fd, victim->in_gen);
     if (d) {
       int tot_used_bytes = CONN_INFO(d)->in.total_bytes + CONN_INFO(d)->in_u.total_bytes + CONN_INFO(d)->out.total_bytes + CONN_INFO(d)->out_p.total_bytes;
       to_free -= tot_used_bytes * 2;
       fail_connection (d, -500);
       job_decref (JOB_REF_PASS (d));
     }
-    lru_delete_ext_conn (Ext);
+    lru_delete_ext_conn (victim);
     ++connections_failed_lru;
+
+    // При исчерпании чанков освобождаем по одному соединению за тик: пусть
+    // клиенты вычитывают данные, а не рвём всё разом.
+    if (pool_full) {
+      break;
+    }
   }
 }
 
@@ -1163,6 +1216,7 @@ void cron (void) {
   check_children_status ();
   compute_stats_sum ();
   check_special_connections_overflow ();
+  update_conn_activity ();
   check_all_conn_buffers ();
 }
 
