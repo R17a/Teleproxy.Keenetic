@@ -225,19 +225,23 @@ tg://proxy?server=<host>&port=<port>&secret=<secret>
 
 `hex("cloudflare.com")` = `636c6f7564666c6172652e636f6d`
 
+В примерах ниже ключ взят равным `hex("cloudflare.com")` — так сразу видно, что
+он демонстрационный. В рабочем конфиге ключ случайный (16 байт), а hex домена
+добавляется к нему только при сборке ссылки.
+
 Готовый хелпер:
 
 ```sh
 sh tools/make-link.sh <32-hex key> <host> <port> [domain]
 # пример:
-sh tools/make-link.sh 72995647c48776f584339f198f0ad2b7 <EXTERNAL_IP> 8443 cloudflare.com
+sh tools/make-link.sh 636c6f7564666c6172652e636f6d <EXTERNAL_IP> 8443 cloudflare.com
 ```
 
 Вывод:
 
 ```text
-tg://proxy?server=<EXTERNAL_IP>&port=8443&secret=ee72995647c48776f584339f198f0ad2b7636c6f7564666c6172652e636f6d
-https://t.me/proxy?server=<EXTERNAL_IP>&port=8443&secret=ee72995647c48776f584339f198f0ad2b7636c6f7564666c6172652e636f6d
+tg://proxy?server=<EXTERNAL_IP>&port=8443&secret=ee636c6f7564666c6172652e636f6d636c6f7564666c6172652e636f6d
+https://t.me/proxy?server=<EXTERNAL_IP>&port=8443&secret=ee636c6f7564666c6172652e636f6d636c6f7564666c6172652e636f6d
 ```
 
 Важно: **порт в ссылке — внешний**, тот, что проброшен на роутер (например `8443`,
