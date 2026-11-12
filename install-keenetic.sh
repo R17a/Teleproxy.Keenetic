@@ -8,7 +8,7 @@
 # Не путать с upstream install.sh — тот ставит systemd-службу на x86/aarch64 VPS.
 set -eu
 
-VER=${VERSION:-1.0.6}
+VER=${VERSION:-1.0.7}
 REPO=${REPO:-https://github.com/R17a/Teleproxy.Keenetic}
 DO_INSTALL=1
 [ "${1:-}" = "--no-install" ] && DO_INSTALL=0
