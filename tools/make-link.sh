@@ -3,9 +3,9 @@
 #
 #   sh tools/make-link.sh <32-hex-secret> <host> <port> [camouflage-domain]
 #
-# Пример:
-#   sh tools/make-link.sh 0123456789abcdef0123456789abcdef 203.0.113.10 8443
-#   -> tg://proxy?server=203.0.113.10&port=8443&secret=ee0123...6d
+# Пример (ключ = hex("cloudflare.com") — демонстрационный):
+#   sh tools/make-link.sh 636c6f7564666c6172652e636f6d 203.0.113.10 8443
+#   -> tg://proxy?server=203.0.113.10&port=8443&secret=ee636c...6d
 #
 # Ссылка собирается по формуле Telegram: "ee" + secret + hex(domain).
 set -eu
